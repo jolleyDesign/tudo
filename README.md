@@ -1,7 +1,7 @@
 # tudo
 
 A fast, local-first todo list for your terminal. Fully keyboard-driven (with
-mouse support), no cloud, no accounts — your tasks are plain JSON files on your
+mouse support), no cloud, no accounts - your tasks are plain JSON files on your
 own disk.
 
 ![tudo demo](tudo-demo.gif)
@@ -19,11 +19,17 @@ own disk.
   atomically so a crash can't corrupt your data.
 - **Local-first** — nothing leaves your machine.
 
+<p align="center">
+  <a href="https://buymeacoffee.com/jolley">
+    <img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy me a coffee" height="60" width="217">
+  </a>
+</p>
+
 ## Install
 
 ### Quick install (prebuilt binary)
 
-macOS and Linux — no Rust toolchain needed:
+macOS and Linux:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/jolleydesign/tudo/main/install.sh | sh
