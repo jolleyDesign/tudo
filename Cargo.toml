@@ -1,0 +1,17 @@
+[package]
+name = "tudo"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.103"
+chrono = { version = "0.4.45", default-features = false, features = ["serde", "clock", "std"] }
+crossterm = "0.29.0"
+dirs = "6.0.0"
+ratatui = "0.30.2"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.150"
+uuid = { version = "1.23.4", features = ["v4", "serde"] }
+
+[dev-dependencies]
+tempfile = "3.27.0"
