@@ -2,7 +2,7 @@
 # tudo installer — downloads a prebuilt binary from GitHub releases and puts it
 # on your PATH. No Rust toolchain required.
 #
-#   curl -fsSL https://raw.githubusercontent.com/jolleydesign/tudo/main/install.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/jolleyDesign/tudo/main/install.sh | sh
 #
 # Environment overrides:
 #   TUDO_INSTALL_DIR   where to install (default: $HOME/.local/bin)
@@ -10,7 +10,7 @@
 
 set -eu
 
-REPO="jolleydesign/tudo"
+REPO="jolleyDesign/tudo"
 BIN="tudo"
 INSTALL_DIR="${TUDO_INSTALL_DIR:-$HOME/.local/bin}"
 VERSION="${TUDO_VERSION:-latest}"
