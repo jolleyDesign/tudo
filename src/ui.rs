@@ -36,6 +36,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
         Mode::Confirm(_) => render_confirm(f, app),
         Mode::ThemePicker(_) => render_theme_picker(f, app),
         Mode::MovePicker(_) => render_move_picker(f, app),
+        Mode::CopyMenu(_) => render_copy_menu(f, app),
         Mode::Settings => render_settings(f, app),
         Mode::Help => render_help(f, app),
         _ => {}
@@ -435,28 +436,12 @@ fn render_footer(f: &mut Frame, area: Rect, app: &App) {
         area,
     );
 
+    // Keep the footer minimal: just the escape hatches. The full keybinding
+    // list lives in the `?` help overlay.
     let chips: &[(&str, &str)] = if matches!(app.mode, Mode::Detail) {
-        &[
-            ("space", "done"),
-            ("e", "dit"),
-            ("m", "ove"),
-            ("d", "elete"),
-            ("n", "otes"),
-            ("Esc", "back"),
-            ("?", "help"),
-        ]
+        &[("Esc", "back"), ("?", "help")]
     } else {
-        &[
-            ("a", "dd"),
-            ("A", "+list"),
-            ("space", "done"),
-            ("m", "ove"),
-            ("/", "search"),
-            ("T", "heme"),
-            ("S", "ettings"),
-            ("?", "help"),
-            ("q", "uit"),
-        ]
+        &[("?", "help"), ("q", "uit")]
     };
 
     let mut right = String::new();
@@ -561,7 +546,9 @@ fn render_confirm(f: &mut Frame, app: &App) {
 }
 
 fn render_help(f: &mut Frame, _app: &App) {
-    let area = centered_rect(f.area(), 64, 24);
+    // Fixed width sized to the longest row so descriptions never clip; capped to
+    // the terminal on narrow screens.
+    let area = centered_rect_cols(f.area(), 64, 25);
     overlay_clear(f, area);
     let block = overlay_block("Keybindings", theme::accent());
     let rows = [
@@ -578,6 +565,7 @@ fn render_help(f: &mut Frame, _app: &App) {
         ("n", "edit notes"),
         ("s", "add subtask"),
         ("m", "move task to another list"),
+        ("c", "copy task (JSON / title / notes)"),
         ("/", "search (title, tags, notes)"),
         ("f", "cycle status filter (all/active/done)"),
         ("T", "open the theme picker"),
@@ -588,12 +576,20 @@ fn render_help(f: &mut Frame, _app: &App) {
     ];
     let mut lines: Vec<Line> = Vec::new();
     for (k, v) in rows {
+        // Dotted leader bridging the gap so the eye can track each key across
+        // to its description. Descriptions stay aligned at a fixed column; the
+        // leader (always flanked by a space) grows to fill shorter keys.
+        let dots = 18usize.saturating_sub(k.chars().count());
         lines.push(Line::from(vec![
             Span::styled(
-                format!("  {k:<20}"),
+                format!("  {k}"),
                 Style::default()
                     .fg(theme::accent())
                     .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                format!(" {} ", ".".repeat(dots)),
+                Style::default().fg(theme::muted()),
             ),
             Span::styled(v.to_string(), Style::default().fg(theme::fg())),
         ]));
@@ -693,6 +689,53 @@ fn render_move_picker(f: &mut Frame, app: &App) {
     lines.push(Line::raw(""));
     lines.push(Line::from(Span::styled(
         "\u{2191}/\u{2193} choose \u{00b7} Enter move \u{00b7} Esc cancel",
+        Style::default().fg(theme::muted()),
+    )));
+
+    f.render_widget(Paragraph::new(Text::from(lines)), inner);
+}
+
+fn render_copy_menu(f: &mut Frame, app: &App) {
+    let Mode::CopyMenu(state) = &app.mode else {
+        return;
+    };
+    let options = crate::app::CopyWhat::all();
+    let area = centered_rect(f.area(), 56, options.len() as u16 + 6);
+    overlay_clear(f, area);
+    let block = overlay_block("Copy", theme::accent());
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+
+    let title = app
+        .current_task()
+        .map(|t| t.title.clone())
+        .unwrap_or_default();
+    let mut lines: Vec<Line> = vec![
+        Line::from(Span::styled(
+            format!("Copy from \u{201c}{title}\u{201d}:"),
+            Style::default().fg(theme::muted()),
+        )),
+        Line::raw(""),
+    ];
+    for (i, what) in options.iter().enumerate() {
+        let selected = i == state.selected;
+        let marker = if selected { "\u{258e} " } else { "  " };
+        let name_style = if selected {
+            Style::default()
+                .fg(theme::accent())
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(theme::fg())
+        };
+        lines.push(Line::from(vec![
+            Span::styled(marker, Style::default().fg(theme::accent())),
+            Span::styled(format!("{}  ", i + 1), Style::default().fg(theme::muted())),
+            Span::styled(what.label().to_string(), name_style),
+        ]));
+    }
+    lines.push(Line::raw(""));
+    lines.push(Line::from(Span::styled(
+        "\u{2191}/\u{2193} choose \u{00b7} 1-3 quick \u{00b7} Enter copy \u{00b7} Esc cancel",
         Style::default().fg(theme::muted()),
     )));
 
@@ -997,6 +1040,18 @@ fn overlay_block(title: &str, accent: ratatui::style::Color) -> Block<'static> {
             format!(" {title} "),
             Style::default().fg(accent).add_modifier(Modifier::BOLD),
         ))
+}
+
+/// A centered rectangle of a fixed column width (capped to the area) and height.
+fn centered_rect_cols(area: Rect, width: u16, height: u16) -> Rect {
+    let width = width.min(area.width);
+    let height = height.min(area.height);
+    Rect {
+        x: area.x + (area.width.saturating_sub(width)) / 2,
+        y: area.y + (area.height.saturating_sub(height)) / 2,
+        width,
+        height,
+    }
 }
 
 /// A rectangle of the given width percentage and fixed height, centered.

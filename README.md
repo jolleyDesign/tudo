@@ -101,6 +101,7 @@ created so you can begin immediately.
 | `n` | edit notes (multi-line: `Enter` for a newline, `Ctrl+S` to save) |
 | `s` | add a subtask |
 | `m` | move the selected task to another list |
+| `c` | copy the selected task (menu: full JSON / title / description) |
 | `/` | search (titles, tags, notes) |
 | `f` | cycle the status filter (all / active / done) |
 | `T` | open the theme picker |

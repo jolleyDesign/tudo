@@ -81,6 +81,22 @@ fn theme_picker_lists_themes() {
 }
 
 #[test]
+fn copy_menu_lists_copy_options() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = App::new(Some(dir.path().to_path_buf())).unwrap();
+    app.add_list("Work".to_string());
+    app.add_task("Ship the TUI".to_string());
+    app.start_copy();
+
+    let text = render_to_string(&mut app, 100, 30);
+    assert!(text.contains("Copy"), "copy menu title missing: {text}");
+    assert!(text.contains("Ship the TUI"), "task title missing in menu");
+    assert!(text.contains("Full task (JSON)"), "JSON option missing");
+    assert!(text.contains("Description (notes)"), "description option missing");
+    assert!(text.contains("Enter copy"), "menu hint missing");
+}
+
+#[test]
 fn settings_panel_shows_paths_and_format() {
     let dir = tempfile::tempdir().unwrap();
     let mut app = App::new(Some(dir.path().to_path_buf())).unwrap();

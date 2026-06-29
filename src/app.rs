@@ -178,6 +178,51 @@ pub struct MovePickerState {
     pub return_detail: bool,
 }
 
+/// What part of the selected task a copy action puts on the clipboard.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CopyWhat {
+    /// The whole task serialized as pretty JSON (id, dates, priority, tags…).
+    Json,
+    /// Just the task title.
+    Title,
+    /// Just the task's free-text notes / description.
+    Notes,
+}
+
+impl CopyWhat {
+    /// All options in the order they appear in the copy menu.
+    pub fn all() -> [CopyWhat; 3] {
+        [CopyWhat::Json, CopyWhat::Title, CopyWhat::Notes]
+    }
+
+    /// Menu label.
+    pub fn label(self) -> &'static str {
+        match self {
+            CopyWhat::Json => "Full task (JSON)",
+            CopyWhat::Title => "Title",
+            CopyWhat::Notes => "Description (notes)",
+        }
+    }
+
+    /// Short noun for the "copied <noun>" status line.
+    fn noun(self) -> &'static str {
+        match self {
+            CopyWhat::Json => "task JSON",
+            CopyWhat::Title => "title",
+            CopyWhat::Notes => "description",
+        }
+    }
+}
+
+/// State for the "copy selected task" menu overlay.
+#[derive(Debug, Clone)]
+pub struct CopyMenuState {
+    /// Cursor into [`CopyWhat::all`].
+    pub selected: usize,
+    /// Return to Detail mode (vs Normal) when finished.
+    pub return_detail: bool,
+}
+
 /// The active interaction mode.
 #[derive(Debug, Clone)]
 pub enum Mode {
@@ -188,6 +233,7 @@ pub enum Mode {
     FirstRun(FirstRunState),
     ThemePicker(ThemePickerState),
     MovePicker(MovePickerState),
+    CopyMenu(CopyMenuState),
     Settings,
     Help,
 }
@@ -869,6 +915,85 @@ impl App {
     /// Close the picker without moving anything.
     pub fn move_picker_cancel(&mut self) {
         if let Mode::MovePicker(state) = &self.mode {
+            self.mode = if state.return_detail {
+                Mode::Detail
+            } else {
+                Mode::Normal
+            };
+        }
+    }
+
+    // --- copy a task to the clipboard ----------------------------------------
+
+    /// Open the copy menu for the selected task. No-op when there is no current
+    /// task (mirrors how the move picker behaves).
+    pub fn start_copy(&mut self) {
+        if self.current_task().is_none() {
+            return;
+        }
+        self.mode = Mode::CopyMenu(CopyMenuState {
+            selected: 0,
+            return_detail: self.in_detail(),
+        });
+    }
+
+    /// Move the copy-menu highlight (wraps).
+    pub fn copy_menu_move(&mut self, delta: isize) {
+        if let Mode::CopyMenu(state) = &mut self.mode {
+            let n = CopyWhat::all().len() as isize;
+            state.selected = ((((state.selected as isize + delta) % n) + n) % n) as usize;
+        }
+    }
+
+    /// The text that copying `what` would place on the clipboard, built from the
+    /// currently selected task. Pure and side-effect free; the actual clipboard
+    /// write lives in [`App::copy_selected`].
+    pub fn copy_payload(&self, what: CopyWhat) -> Option<String> {
+        let task = self.current_task()?;
+        match what {
+            CopyWhat::Json => serde_json::to_string_pretty(task).ok(),
+            CopyWhat::Title => Some(task.title.clone()),
+            CopyWhat::Notes => Some(task.notes.clone()),
+        }
+    }
+
+    /// Copy the highlighted menu item to the clipboard.
+    pub fn copy_menu_confirm(&mut self) {
+        if let Mode::CopyMenu(state) = &self.mode {
+            self.copy_selected(CopyWhat::all()[state.selected]);
+        }
+    }
+
+    /// Copy `what` from the selected task to the clipboard and close the menu.
+    /// Shared by the Enter-confirm path and the 1/2/3 quick keys.
+    pub fn copy_selected(&mut self, what: CopyWhat) {
+        let return_detail = match &self.mode {
+            Mode::CopyMenu(state) => state.return_detail,
+            _ => return,
+        };
+        self.mode = if return_detail {
+            Mode::Detail
+        } else {
+            Mode::Normal
+        };
+        let Some(text) = self.copy_payload(what) else {
+            self.set_status("nothing to copy".to_string());
+            return;
+        };
+        // Don't clobber the clipboard with an empty description.
+        if what == CopyWhat::Notes && text.trim().is_empty() {
+            self.set_status("task has no description to copy".to_string());
+            return;
+        }
+        match crate::clipboard::copy(&text) {
+            Ok(()) => self.set_status(format!("copied {} to clipboard", what.noun())),
+            Err(e) => self.set_status(format!("copy failed: {e}")),
+        }
+    }
+
+    /// Close the copy menu without copying anything.
+    pub fn copy_menu_cancel(&mut self) {
+        if let Mode::CopyMenu(state) = &self.mode {
             self.mode = if state.return_detail {
                 Mode::Detail
             } else {

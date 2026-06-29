@@ -4,7 +4,7 @@ use ratatui::crossterm::event::{
     KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
 
-use crate::app::{App, ConfirmAction, InputField, Mode};
+use crate::app::{App, ConfirmAction, CopyWhat, InputField, Mode};
 use crate::config;
 
 /// Route a key event to the handler for the current mode.
@@ -25,6 +25,7 @@ pub fn handle_key(app: &mut App, key: KeyEvent) {
         Mode::Confirm(_) => confirm_key(app, key),
         Mode::ThemePicker(_) => theme_picker_key(app, key),
         Mode::MovePicker(_) => move_picker_key(app, key),
+        Mode::CopyMenu(_) => copy_menu_key(app, key),
         Mode::Settings => settings_key(app, key),
         Mode::Help => app.close_overlay(),
         Mode::Normal | Mode::Detail => nav_key(app, key),
@@ -60,6 +61,19 @@ fn move_picker_key(app: &mut App, key: KeyEvent) {
     }
 }
 
+fn copy_menu_key(app: &mut App, key: KeyEvent) {
+    match key.code {
+        KeyCode::Char('j') | KeyCode::Down => app.copy_menu_move(1),
+        KeyCode::Char('k') | KeyCode::Up => app.copy_menu_move(-1),
+        KeyCode::Char('1') => app.copy_selected(CopyWhat::Json),
+        KeyCode::Char('2') => app.copy_selected(CopyWhat::Title),
+        KeyCode::Char('3') => app.copy_selected(CopyWhat::Notes),
+        KeyCode::Enter => app.copy_menu_confirm(),
+        KeyCode::Esc | KeyCode::Char('q') => app.copy_menu_cancel(),
+        _ => {}
+    }
+}
+
 fn nav_key(app: &mut App, key: KeyEvent) {
     let detail = matches!(app.mode, Mode::Detail);
     match key.code {
@@ -89,6 +103,7 @@ fn nav_key(app: &mut App, key: KeyEvent) {
         KeyCode::Char('n') => app.start_set_notes(),
         KeyCode::Char('s') => app.start_add_subtask(),
         KeyCode::Char('m') => app.start_move_task(),
+        KeyCode::Char('c') => app.start_copy(),
         KeyCode::Char('/') => app.start_search(),
         KeyCode::Char('f') => app.cycle_status_filter(),
         KeyCode::Char('T') => app.open_theme_picker(),

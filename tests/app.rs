@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 
-use tudo::app::{App, StatusFilter};
+use tudo::app::{App, CopyWhat, Mode, StatusFilter};
 use tudo::model::Priority;
 use tudo::theme::ThemeKind;
 use tudo::{config, storage};
@@ -189,6 +189,66 @@ fn move_task_with_no_other_list_is_a_noop_with_hint() {
     // No picker opened (still a single list) and a hint was set.
     assert!(!app.status.is_empty());
     assert_eq!(app.current_list().unwrap().tasks.len(), 1);
+}
+
+#[test]
+fn copy_payload_builds_title_notes_and_json() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app_in(dir.path());
+    app.add_list("L".to_string());
+    app.add_task("buy milk".to_string());
+    app.set_current_notes("2% from the corner shop".to_string());
+    app.set_current_tags("errand");
+    app.cycle_current_priority(); // -> low
+
+    assert_eq!(
+        app.copy_payload(CopyWhat::Title).unwrap(),
+        "buy milk".to_string()
+    );
+    assert_eq!(
+        app.copy_payload(CopyWhat::Notes).unwrap(),
+        "2% from the corner shop".to_string()
+    );
+
+    // JSON carries the whole task and round-trips through serde_json.
+    let json = app.copy_payload(CopyWhat::Json).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+    assert_eq!(parsed["title"], "buy milk");
+    assert_eq!(parsed["notes"], "2% from the corner shop");
+    assert_eq!(parsed["priority"], "low");
+    assert_eq!(parsed["tags"][0], "errand");
+    assert!(parsed["id"].is_string());
+    assert!(parsed["created"].is_string());
+}
+
+#[test]
+fn copy_menu_opens_navigates_and_cancels() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app_in(dir.path());
+
+    // No task yet: the menu refuses to open.
+    app.start_copy();
+    assert!(!matches!(app.mode, Mode::CopyMenu(_)));
+
+    app.add_list("L".to_string());
+    app.add_task("t".to_string());
+
+    app.start_copy();
+    let selected = |app: &App| match &app.mode {
+        Mode::CopyMenu(s) => s.selected,
+        other => panic!("expected the copy menu, got {other:?}"),
+    };
+    assert_eq!(selected(&app), 0);
+
+    // Highlight wraps in both directions across the three options.
+    app.copy_menu_move(-1);
+    assert_eq!(selected(&app), CopyWhat::all().len() - 1);
+    app.copy_menu_move(1);
+    assert_eq!(selected(&app), 0);
+
+    // Esc closes the menu without touching the clipboard.
+    app.copy_menu_cancel();
+    assert!(matches!(app.mode, Mode::Normal));
 }
 
 #[test]
