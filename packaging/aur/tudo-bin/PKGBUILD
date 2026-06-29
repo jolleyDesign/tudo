@@ -1,0 +1,21 @@
+# Maintainer: Alex Jolley <alex.jolley@arivo.com>
+pkgname=tudo-bin
+pkgver=1.0.1
+pkgrel=1
+pkgdesc="A fast, local-first todo list for your terminal"
+arch=('x86_64' 'aarch64')
+url="https://github.com/jolleyDesign/tudo"
+license=('MIT')
+provides=('tudo')
+conflicts=('tudo')
+source=("LICENSE-$pkgver::$url/raw/v$pkgver/LICENSE")
+source_x86_64=("$pkgname-$pkgver-x86_64.tar.gz::$url/releases/download/v$pkgver/tudo-x86_64-unknown-linux-musl.tar.gz")
+source_aarch64=("$pkgname-$pkgver-aarch64.tar.gz::$url/releases/download/v$pkgver/tudo-aarch64-unknown-linux-musl.tar.gz")
+sha256sums=('53c1a4850cbb91c2c486d4041d7201aa4a839fbd6618693ee36523d7fababd0e')
+sha256sums_x86_64=('3efd594dedca0e50ebc085a0d457a8b240df8b11588dac80fee2071565702daf')
+sha256sums_aarch64=('b870c39689c6696ce8a70c7660a8e200ec01c336230f90d474732ea127215a64')
+
+package() {
+  install -Dm755 "$srcdir/tudo" "$pkgdir/usr/bin/tudo"
+  install -Dm644 "$srcdir/LICENSE-$pkgver" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

@@ -1,0 +1,18 @@
+pkgbase = tudo-bin
+	pkgdesc = A fast, local-first todo list for your terminal
+	pkgver = 1.0.1
+	pkgrel = 1
+	url = https://github.com/jolleyDesign/tudo
+	arch = x86_64
+	arch = aarch64
+	license = MIT
+	provides = tudo
+	conflicts = tudo
+	source = LICENSE-1.0.1::https://github.com/jolleyDesign/tudo/raw/v1.0.1/LICENSE
+	sha256sums = 53c1a4850cbb91c2c486d4041d7201aa4a839fbd6618693ee36523d7fababd0e
+	source_x86_64 = tudo-bin-1.0.1-x86_64.tar.gz::https://github.com/jolleyDesign/tudo/releases/download/v1.0.1/tudo-x86_64-unknown-linux-musl.tar.gz
+	sha256sums_x86_64 = 3efd594dedca0e50ebc085a0d457a8b240df8b11588dac80fee2071565702daf
+	source_aarch64 = tudo-bin-1.0.1-aarch64.tar.gz::https://github.com/jolleyDesign/tudo/releases/download/v1.0.1/tudo-aarch64-unknown-linux-musl.tar.gz
+	sha256sums_aarch64 = b870c39689c6696ce8a70c7660a8e200ec01c336230f90d474732ea127215a64
+
+pkgname = tudo-bin
