@@ -119,6 +119,79 @@ fn delete_task_clamps_selection() {
 }
 
 #[test]
+fn move_task_to_another_list_persists_and_clamps() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app_in(dir.path());
+    // add_list sorts by name; "Inbox" < "Work", so Inbox is index 0.
+    app.add_list("Inbox".to_string());
+    app.add_list("Work".to_string());
+
+    // Add two tasks to Inbox.
+    app.select_list_index(0);
+    app.add_task("a".to_string());
+    app.add_task("b".to_string());
+    assert_eq!(app.current_list().unwrap().name, "Inbox");
+
+    // Move the selected task ("b", the last-added/selected) into Work.
+    app.select_task_visible(1);
+    app.start_move_task();
+    app.move_picker_confirm(); // selected target defaults to the first other list (Work)
+
+    // Inbox keeps "a" with a valid clamped selection; Work received "b".
+    assert_eq!(app.current_list().unwrap().name, "Inbox");
+    assert_eq!(app.current_list().unwrap().tasks.len(), 1);
+    assert_eq!(app.current_task().unwrap().title, "a");
+
+    app.select_list_index(1);
+    assert_eq!(app.current_list().unwrap().name, "Work");
+    assert_eq!(app.current_list().unwrap().tasks.len(), 1);
+    assert_eq!(app.current_task().unwrap().title, "b");
+
+    // Both lists were persisted.
+    let reloaded = app_in(dir.path());
+    let inbox = reloaded.lists.iter().find(|l| l.name == "Inbox").unwrap();
+    let work = reloaded.lists.iter().find(|l| l.name == "Work").unwrap();
+    assert_eq!(inbox.tasks.len(), 1);
+    assert_eq!(work.tasks.len(), 1);
+    assert_eq!(work.tasks[0].title, "b");
+}
+
+#[test]
+fn status_messages_expire_after_their_deadline() {
+    use std::time::Duration;
+
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app_in(dir.path());
+
+    app.set_status("moved \"x\" to Work");
+    assert_eq!(app.status, "moved \"x\" to Work");
+    let deadline = app.status_deadline().expect("a deadline is set");
+
+    // Just before the deadline the message stays.
+    app.expire_status(deadline - Duration::from_millis(1));
+    assert!(!app.status.is_empty());
+    assert!(app.status_deadline().is_some());
+
+    // At the deadline it clears and stops waking the loop.
+    app.expire_status(deadline);
+    assert!(app.status.is_empty());
+    assert!(app.status_deadline().is_none());
+}
+
+#[test]
+fn move_task_with_no_other_list_is_a_noop_with_hint() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app_in(dir.path());
+    app.add_list("Only".to_string());
+    app.add_task("x".to_string());
+
+    app.start_move_task();
+    // No picker opened (still a single list) and a hint was set.
+    assert!(!app.status.is_empty());
+    assert_eq!(app.current_list().unwrap().tasks.len(), 1);
+}
+
+#[test]
 fn subtask_lifecycle() {
     let dir = tempfile::tempdir().unwrap();
     let mut app = app_in(dir.path());

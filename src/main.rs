@@ -1,11 +1,12 @@
 //! tudo — a local-first terminal todo list.
 
 use std::io::{self, Stdout};
+use std::time::Instant;
 
 use anyhow::Result;
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
-use ratatui::crossterm::event::{DisableMouseCapture, EnableMouseCapture, Event, read};
+use ratatui::crossterm::event::{DisableMouseCapture, EnableMouseCapture, Event, poll, read};
 use ratatui::crossterm::execute;
 use ratatui::crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
@@ -49,11 +50,21 @@ fn main() -> Result<()> {
 fn run(terminal: &mut Term, app: &mut App) -> Result<()> {
     while !app.should_quit {
         terminal.draw(|f| ui::render(f, app))?;
-        match read()? {
-            Event::Key(key) => event::handle_key(app, key),
-            Event::Mouse(m) => event::handle_mouse(app, m),
-            _ => {}
+
+        // Block until the next event, but if a transient status message is
+        // showing, wake up at its deadline so we can clear it without input.
+        let event_ready = match app.status_deadline() {
+            Some(deadline) => poll(deadline.saturating_duration_since(Instant::now()))?,
+            None => true,
+        };
+        if event_ready {
+            match read()? {
+                Event::Key(key) => event::handle_key(app, key),
+                Event::Mouse(m) => event::handle_mouse(app, m),
+                _ => {}
+            }
         }
+        app.expire_status(Instant::now());
     }
     Ok(())
 }

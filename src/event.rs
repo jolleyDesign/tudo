@@ -24,6 +24,7 @@ pub fn handle_key(app: &mut App, key: KeyEvent) {
         Mode::Input(_) => input_key(app, key),
         Mode::Confirm(_) => confirm_key(app, key),
         Mode::ThemePicker(_) => theme_picker_key(app, key),
+        Mode::MovePicker(_) => move_picker_key(app, key),
         Mode::Settings => settings_key(app, key),
         Mode::Help => app.close_overlay(),
         Mode::Normal | Mode::Detail => nav_key(app, key),
@@ -45,6 +46,16 @@ fn theme_picker_key(app: &mut App, key: KeyEvent) {
         KeyCode::Char('k') | KeyCode::Up => app.theme_picker_preview(-1),
         KeyCode::Enter => app.theme_picker_confirm(),
         KeyCode::Esc | KeyCode::Char('q') => app.theme_picker_cancel(),
+        _ => {}
+    }
+}
+
+fn move_picker_key(app: &mut App, key: KeyEvent) {
+    match key.code {
+        KeyCode::Char('j') | KeyCode::Down => app.move_picker_move(1),
+        KeyCode::Char('k') | KeyCode::Up => app.move_picker_move(-1),
+        KeyCode::Enter => app.move_picker_confirm(),
+        KeyCode::Esc | KeyCode::Char('q') => app.move_picker_cancel(),
         _ => {}
     }
 }
@@ -77,6 +88,7 @@ fn nav_key(app: &mut App, key: KeyEvent) {
         KeyCode::Char('t') => app.start_set_tags(),
         KeyCode::Char('n') => app.start_set_notes(),
         KeyCode::Char('s') => app.start_add_subtask(),
+        KeyCode::Char('m') => app.start_move_task(),
         KeyCode::Char('/') => app.start_search(),
         KeyCode::Char('f') => app.cycle_status_filter(),
         KeyCode::Char('T') => app.open_theme_picker(),

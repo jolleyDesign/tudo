@@ -1,8 +1,6 @@
 # tudo
 
-A fast, local-first todo list for your terminal. Fully keyboard-driven (with
-mouse support), no cloud, no accounts - your tasks are plain JSON files on your
-own disk.
+A fast, local-first todo list for your terminal. Fully keyboard-driven (with mouse support), no cloud, no accounts - your tasks are plain JSON files on your own disk.
 
 ![tudo demo](tudo-demo.gif)
 
@@ -102,6 +100,7 @@ created so you can begin immediately.
 | `t` | edit tags |
 | `n` | edit notes (multi-line: `Enter` for a newline, `Ctrl+S` to save) |
 | `s` | add a subtask |
+| `m` | move the selected task to another list |
 | `/` | search (titles, tags, notes) |
 | `f` | cycle the status filter (all / active / done) |
 | `T` | open the theme picker |

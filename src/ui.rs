@@ -35,6 +35,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
         Mode::Input(_) => render_input(f, app),
         Mode::Confirm(_) => render_confirm(f, app),
         Mode::ThemePicker(_) => render_theme_picker(f, app),
+        Mode::MovePicker(_) => render_move_picker(f, app),
         Mode::Settings => render_settings(f, app),
         Mode::Help => render_help(f, app),
         _ => {}
@@ -438,6 +439,7 @@ fn render_footer(f: &mut Frame, area: Rect, app: &App) {
         &[
             ("space", "done"),
             ("e", "dit"),
+            ("m", "ove"),
             ("d", "elete"),
             ("n", "otes"),
             ("Esc", "back"),
@@ -448,6 +450,7 @@ fn render_footer(f: &mut Frame, area: Rect, app: &App) {
             ("a", "dd"),
             ("A", "+list"),
             ("space", "done"),
+            ("m", "ove"),
             ("/", "search"),
             ("T", "heme"),
             ("S", "ettings"),
@@ -574,6 +577,7 @@ fn render_help(f: &mut Frame, _app: &App) {
         ("t", "edit tags"),
         ("n", "edit notes"),
         ("s", "add subtask"),
+        ("m", "move task to another list"),
         ("/", "search (title, tags, notes)"),
         ("f", "cycle status filter (all/active/done)"),
         ("T", "open the theme picker"),
@@ -639,6 +643,56 @@ fn render_theme_picker(f: &mut Frame, app: &App) {
     lines.push(Line::raw(""));
     lines.push(Line::from(Span::styled(
         "\u{2191}/\u{2193} preview \u{00b7} Enter apply \u{00b7} Esc cancel",
+        Style::default().fg(theme::muted()),
+    )));
+
+    f.render_widget(Paragraph::new(Text::from(lines)), inner);
+}
+
+fn render_move_picker(f: &mut Frame, app: &App) {
+    let Mode::MovePicker(state) = &app.mode else {
+        return;
+    };
+    let area = centered_rect(f.area(), 56, state.targets.len() as u16 + 6);
+    overlay_clear(f, area);
+    let block = overlay_block("Move to list", theme::accent());
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+
+    let moving = app
+        .current_task()
+        .map(|t| t.title.clone())
+        .unwrap_or_default();
+    let mut lines: Vec<Line> = vec![
+        Line::from(Span::styled(
+            format!("Move \u{201c}{moving}\u{201d} to:"),
+            Style::default().fg(theme::muted()),
+        )),
+        Line::raw(""),
+    ];
+    for (i, &li) in state.targets.iter().enumerate() {
+        let list = &app.lists[li];
+        let selected = i == state.selected;
+        let marker = if selected { "\u{258e} " } else { "  " };
+        let name_style = if selected {
+            Style::default()
+                .fg(theme::accent())
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(theme::fg())
+        };
+        lines.push(Line::from(vec![
+            Span::styled(marker, Style::default().fg(theme::accent())),
+            Span::styled(format!("{:<22}", list.name), name_style),
+            Span::styled(
+                format!("{}/{}", list.open_count(), list.tasks.len()),
+                Style::default().fg(theme::muted()),
+            ),
+        ]));
+    }
+    lines.push(Line::raw(""));
+    lines.push(Line::from(Span::styled(
+        "\u{2191}/\u{2193} choose \u{00b7} Enter move \u{00b7} Esc cancel",
         Style::default().fg(theme::muted()),
     )));
 

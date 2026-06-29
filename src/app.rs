@@ -5,10 +5,14 @@
 //! input to these methods.
 
 use std::path::PathBuf;
+use std::time::{Duration, Instant};
 
 use chrono::Local;
 use ratatui::layout::Rect;
 use ratatui::widgets::ListState;
+
+/// How long a transient status-line message stays on screen before clearing.
+pub const STATUS_TTL: Duration = Duration::from_secs(4);
 
 use crate::config::{self, Config};
 use crate::model::{self, List, Subtask, Task};
@@ -163,6 +167,17 @@ pub struct ThemePickerState {
     pub original: ThemeKind,
 }
 
+/// State for the "move task to another list" picker overlay.
+#[derive(Debug, Clone)]
+pub struct MovePickerState {
+    /// Indices into [`App::lists`] that are valid targets (every list but the source).
+    pub targets: Vec<usize>,
+    /// Cursor into `targets`.
+    pub selected: usize,
+    /// Return to Detail mode (vs Normal) on cancel.
+    pub return_detail: bool,
+}
+
 /// The active interaction mode.
 #[derive(Debug, Clone)]
 pub enum Mode {
@@ -172,6 +187,7 @@ pub enum Mode {
     Confirm(ConfirmState),
     FirstRun(FirstRunState),
     ThemePicker(ThemePickerState),
+    MovePicker(MovePickerState),
     Settings,
     Help,
 }
@@ -263,6 +279,8 @@ pub struct App {
     pub filter: Filter,
     pub theme: ThemeKind,
     pub status: String,
+    /// When the current `status` message should auto-clear (`None` = nothing showing).
+    status_expiry: Option<Instant>,
     pub should_quit: bool,
     pub clickables: Clickables,
 }
@@ -305,6 +323,7 @@ impl App {
             filter: Filter::default(),
             theme,
             status: String::new(),
+            status_expiry: None,
             should_quit: false,
             clickables: Clickables::default(),
         })
@@ -373,11 +392,11 @@ impl App {
         }
         let new = config::expand_tilde(raw);
         if new == self.data_dir {
-            self.status = "data is already there".to_string();
+            self.set_status("data is already there".to_string());
             return;
         }
         if let Err(e) = std::fs::create_dir_all(&new) {
-            self.status = format!("could not create {}: {e}", new.display());
+            self.set_status(format!("could not create {}: {e}", new.display()));
             return;
         }
         // Write every list into the new dir first; bail (keeping originals) on error.
@@ -385,7 +404,7 @@ impl App {
         let lists = self.lists.clone();
         for list in &lists {
             if let Err(e) = storage::save_list(&new, list) {
-                self.status = format!("move failed: {e}");
+                self.set_status(format!("move failed: {e}"));
                 return;
             }
         }
@@ -396,7 +415,7 @@ impl App {
         self.data_dir = new.clone();
         match storage::load_lists(&new) {
             Ok(l) => self.lists = l,
-            Err(e) => self.status = format!("load error: {e}"),
+            Err(e) => self.set_status(format!("load error: {e}")),
         }
         if self.lists.is_empty() {
             self.list_state.select(None);
@@ -406,7 +425,7 @@ impl App {
             self.task_state.select(Some(0));
         }
         self.persist_config();
-        self.status = format!("data moved to {}", new.display());
+        self.set_status(format!("data moved to {}", new.display()));
     }
 
     /// Close the picker and restore the theme that was active when it opened.
@@ -429,13 +448,35 @@ impl App {
             theme: self.theme,
         };
         if let Err(e) = config::save_config(&config) {
-            self.status = format!("theme set for this session only: {e}");
+            self.set_status(format!("theme set for this session only: {e}"));
         }
     }
 
     /// Today's date in the local timezone (used for overdue/due-today logic).
     pub fn today() -> chrono::NaiveDate {
         Local::now().date_naive()
+    }
+
+    // --- transient status line ----------------------------------------------
+
+    /// Show a status message that auto-clears after [`STATUS_TTL`].
+    pub fn set_status(&mut self, msg: impl Into<String>) {
+        self.status = msg.into();
+        self.status_expiry = Some(Instant::now() + STATUS_TTL);
+    }
+
+    /// The instant the current message should disappear, if one is showing.
+    /// The run loop uses this to wake up just in time to clear it.
+    pub fn status_deadline(&self) -> Option<Instant> {
+        self.status_expiry
+    }
+
+    /// Clear the status message once `now` has reached its deadline.
+    pub fn expire_status(&mut self, now: Instant) {
+        if self.status_expiry.is_some_and(|deadline| now >= deadline) {
+            self.status.clear();
+            self.status_expiry = None;
+        }
     }
 
     /// Path to the config pointer file, for display in settings.
@@ -618,7 +659,7 @@ impl App {
             None => return,
         };
         if let Err(e) = result {
-            self.status = format!("save error: {e}");
+            self.set_status(format!("save error: {e}"));
         }
     }
 
@@ -649,7 +690,7 @@ impl App {
         let mut list = List::new(name);
         list.slug = slug.clone();
         if let Err(e) = storage::save_list(&self.data_dir, &list) {
-            self.status = format!("save error: {e}");
+            self.set_status(format!("save error: {e}"));
             return;
         }
         self.lists.push(list);
@@ -680,7 +721,7 @@ impl App {
             }
             self.focus = Focus::Tasks;
         } else {
-            self.status = "create a list first (A)".to_string();
+            self.set_status("create a list first (A)".to_string());
         }
     }
 
@@ -706,7 +747,7 @@ impl App {
                 self.with_current_task(|t| t.due = due);
             }
             Err(_) => {
-                self.status = "bad date — use YYYY-MM-DD, today, tomorrow, or +N".to_string();
+                self.set_status("bad date — use YYYY-MM-DD, today, tomorrow, or +N".to_string());
             }
         }
     }
@@ -748,7 +789,7 @@ impl App {
         }
         let list = self.lists.remove(li);
         if let Err(e) = storage::delete_list_file(&self.data_dir, &list) {
-            self.status = format!("delete error: {e}");
+            self.set_status(format!("delete error: {e}"));
         }
         if self.lists.is_empty() {
             self.list_state.select(None);
@@ -759,6 +800,81 @@ impl App {
             self.task_state.select(Some(0));
         }
         self.focus = Focus::Lists;
+    }
+
+    // --- move a task to another list -----------------------------------------
+
+    /// Open the picker to move the selected task elsewhere. No-op when there is
+    /// no current task; sets a hint when there is no other list to move to.
+    pub fn start_move_task(&mut self) {
+        if self.current_task().is_none() {
+            return;
+        }
+        let src = self.selected_list();
+        let targets: Vec<usize> = (0..self.lists.len()).filter(|&i| i != src).collect();
+        if targets.is_empty() {
+            self.set_status("no other list to move to".to_string());
+            return;
+        }
+        self.mode = Mode::MovePicker(MovePickerState {
+            targets,
+            selected: 0,
+            return_detail: self.in_detail(),
+        });
+    }
+
+    /// Move the picker highlight (wraps).
+    pub fn move_picker_move(&mut self, delta: isize) {
+        if let Mode::MovePicker(state) = &mut self.mode {
+            let n = state.targets.len() as isize;
+            if n == 0 {
+                return;
+            }
+            state.selected = ((((state.selected as isize + delta) % n) + n) % n) as usize;
+        }
+    }
+
+    /// Splice the selected task out of its list and onto the end of the
+    /// highlighted one, persisting both. The task leaves this list, so we always
+    /// return to Normal (its detail view no longer applies here).
+    pub fn move_picker_confirm(&mut self) {
+        let target = match &self.mode {
+            Mode::MovePicker(state) => state.targets.get(state.selected).copied(),
+            _ => return,
+        };
+        let src = self.selected_list();
+        let ti = self.current_task_index();
+        let (Some(target), Some(ti)) = (target, ti) else {
+            self.mode = Mode::Normal;
+            return;
+        };
+        let task = self.lists[src].tasks.remove(ti);
+        let title = task.title.clone();
+        let dest = self.lists[target].name.clone();
+        self.lists[target].tasks.push(task);
+        self.save_list_at(src);
+        self.save_list_at(target);
+        // Clamp the source selection now that a task is gone.
+        let visible = self.visible_task_indices().len();
+        if visible == 0 {
+            self.task_state.select(None);
+        } else {
+            let cur = self.selected_visible_task().min(visible - 1);
+            self.task_state.select(Some(cur));
+        }
+        self.set_status(format!("moved \"{title}\" to {dest}"));
+        self.mode = Mode::Normal;
+    }
+
+    /// Close the picker without moving anything.
+    pub fn move_picker_cancel(&mut self) {
+        if let Mode::MovePicker(state) = &self.mode {
+            self.mode = if state.return_detail {
+                Mode::Detail
+            } else {
+                Mode::Normal
+            };
+        }
     }
 
     // --- subtask actions -----------------------------------------------------
@@ -866,7 +982,7 @@ impl App {
 
     pub fn start_add_task(&mut self) {
         if self.lists.is_empty() {
-            self.status = "create a list first (A)".to_string();
+            self.set_status("create a list first (A)".to_string());
             return;
         }
         self.mode = Mode::Input(InputState::new(
@@ -1033,7 +1149,7 @@ impl App {
 
     pub fn commit_first_run(&mut self, dir: PathBuf) {
         if let Err(e) = std::fs::create_dir_all(&dir) {
-            self.status = format!("could not create {}: {e}", dir.display());
+            self.set_status(format!("could not create {}: {e}", dir.display()));
             return;
         }
         let config = Config {
@@ -1041,14 +1157,14 @@ impl App {
             theme: self.theme,
         };
         if let Err(e) = config::save_config(&config) {
-            self.status = format!("could not save config: {e}");
+            self.set_status(format!("could not save config: {e}"));
             return;
         }
         self.data_dir = dir;
         match storage::load_lists(&self.data_dir) {
             Ok(lists) => self.lists = lists,
             Err(e) => {
-                self.status = format!("load error: {e}");
+                self.set_status(format!("load error: {e}"));
                 self.lists = Vec::new();
             }
         }
