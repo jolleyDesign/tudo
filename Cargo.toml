@@ -1,8 +1,15 @@
 [package]
 name = "tudo"
-version = "0.1.0"
+version = "1.0.1"
 edition = "2024"
 license = "MIT"
+description = "A fast, local-first todo list for your terminal"
+repository = "https://github.com/jolleyDesign/tudo"
+homepage = "https://github.com/jolleyDesign/tudo"
+readme = "README.md"
+keywords = ["todo", "tui", "cli", "productivity", "terminal"]
+categories = ["command-line-utilities"]
+exclude = ["tudo-demo.gif"]
 
 [dependencies]
 anyhow = "1.0.103"
