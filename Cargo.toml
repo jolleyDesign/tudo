@@ -1,5 +1,5 @@
 [package]
-name = "tudo"
+name = "tudo-tui"
 version = "1.0.1"
 edition = "2024"
 license = "MIT"
@@ -9,7 +9,17 @@ homepage = "https://github.com/jolleyDesign/tudo"
 readme = "README.md"
 keywords = ["todo", "tui", "cli", "productivity", "terminal"]
 categories = ["command-line-utilities"]
-exclude = ["tudo-demo.gif"]
+exclude = ["tudo-demo.gif", "packaging"]
+
+# Published to crates.io as `tudo-tui` (the name `tudo` was already taken), but the
+# library and the installed command both stay `tudo`, so `use tudo::…` and the
+# `tudo` binary are unchanged. Users run `cargo install tudo-tui`.
+[lib]
+name = "tudo"
+
+[[bin]]
+name = "tudo"
+path = "src/main.rs"
 
 [dependencies]
 anyhow = "1.0.103"

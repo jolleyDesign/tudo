@@ -8,16 +8,16 @@ own disk.
 
 ## Features
 
-- **Multiple lists / projects** — switch between named lists in the sidebar.
-- **Rich tasks** — priority, due date, tags, free-text notes, and one level of
+- **Multiple lists / projects**: switch between named lists in the sidebar.
+- **Rich tasks**: priority, due date, tags, free-text notes, and one level of
   checkable subtasks.
-- **Keyboard first, mouse friendly** — vim keys *and* arrow keys; click rows,
+- **Keyboard first, mouse friendly**: vim keys and arrow keys; click rows,
   click a checkbox to toggle, scroll to move.
-- **Search & filter** — substring search across titles/tags/notes and a
+- **Search & filter**: substring search across titles/tags/notes and a
   status filter (all / active / done).
-- **Human-readable storage** — one pretty-printed JSON file per list, written
+- **Human-readable storage**: one pretty-printed JSON file per list, written
   atomically so a crash can't corrupt your data.
-- **Local-first** — nothing leaves your machine.
+- **Local-first**: nothing leaves your machine.
 
 <p align="center">
   <a href="https://buymeacoffee.com/jolley">
@@ -41,12 +41,30 @@ This grabs the right binary for your platform from the latest
 `TUDO_VERSION` (e.g. `v0.1.0`) to pin a specific version.
 
 **Updating:** re-run the install command above to upgrade to the latest
-release — it overwrites the existing binary in place. Check what you're running
+release - it overwrites the existing binary in place. Check what you're running
 with `tudo --version`.
+
+### With Homebrew
+
+macOS and Linux (via [Homebrew](https://brew.sh)):
+
+```sh
+brew install jolleydesign/tudo/tudo
+```
+
+This taps `jolleydesign/homebrew-tudo` and installs the prebuilt binary. Upgrade
+later with `brew upgrade tudo`.
 
 ### With Cargo
 
-If you have a Rust toolchain (1.95+):
+From [crates.io](https://crates.io/crates/tudo-tui) - the crate is published as
+`tudo-tui` (the name `tudo` was taken), but the installed command is still `tudo`:
+
+```sh
+cargo install tudo-tui
+```
+
+Or build from source with a Rust toolchain (1.95+):
 
 ```sh
 # straight from GitHub
@@ -102,13 +120,13 @@ it done, and use the scroll wheel to move within the focused pane.
 
 Press `T` to open the **theme picker**: browse with `↑/↓` to preview each theme
 live across the whole UI, `Enter` to apply, `Esc` to revert. Eleven palettes are
-built in — **Tokyo Night** (default), **Catppuccin Mocha**, **Dracula**,
+built in - **Tokyo Night**, **Catppuccin Mocha**, **Dracula**,
 **Nord**, **Gruvbox Dark**, **Solarized Dark**, **One Dark**, **Rosé Pine**,
-**Gotham**, **Black & White**, and **Terminal**. Your choice is remembered in
-the config pointer.
+**Gotham**, **Black & White**, and **Terminal** (default). Your choice is
+remembered in the config pointer.
 
 The coloured themes are truecolor, so they look the same regardless of your
-terminal's own theme; **Terminal** does the opposite — it forces no background
+terminal's own theme; **Terminal** does the opposite - it forces no background
 and uses the 16 ANSI colours, so the app adopts your terminal's scheme. Set
 `TUDO_THEME` (e.g. `TUDO_THEME=dracula` or `TUDO_THEME=none`) to override the
 theme for a single run.
@@ -119,11 +137,11 @@ Press `S` to open the settings panel, which shows your **data directory**, the
 **config file** path, the storage format, the active theme, your list/task
 counts, and any environment overrides currently in effect.
 
-Configuration is a small **JSON** file (not TOML) — `~/.config/tudo/config.json`
+Configuration is a small **JSON** file (not TOML) - `~/.config/tudo/config.json`
 by default (override with `$TUDO_CONFIG`). It holds just the `data_dir` and
 `theme`; everything else (your actual lists) lives as separate JSON files in the
 data directory. To move your data, press `S` then `d`, type a new path (`~` is
-allowed), and `Enter` — tudo moves your list files there and repoints the config.
+allowed), and `Enter` - tudo moves your list files there and repoints the config.
 
 ## Storage format
 
@@ -151,14 +169,14 @@ Each list is a single JSON file (`<slug>.json`) in your data directory:
 }
 ```
 
-Edit these by hand or keep them in a git repo — they're just text.
+Edit these by hand or keep them in a git repo - they're just text.
 
 ## Environment variables
 
-- `TUDO_DIR` — override the data directory (skips the saved config; great for
+- `TUDO_DIR` - override the data directory (skips the saved config; great for
   scoping tasks to a project or for scripting).
-- `TUDO_CONFIG` — override the location of the config pointer file.
-- `TUDO_THEME` — override the theme for one run (`tokyo-night`, `catppuccin`,
+- `TUDO_CONFIG` - override the location of the config pointer file.
+- `TUDO_THEME` - override the theme for one run (`tokyo-night`, `catppuccin`,
   `dracula`, `nord`, `gruvbox`, `solarized`, `one-dark`, `rose-pine`, `gotham`,
   `black-white`, or `none`/`terminal`).
 

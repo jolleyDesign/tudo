@@ -63,7 +63,6 @@ impl Theme {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ThemeKind {
-    #[default]
     TokyoNight,
     CatppuccinMocha,
     Dracula,
@@ -74,6 +73,7 @@ pub enum ThemeKind {
     RosePine,
     Gotham,
     BlackWhite,
+    #[default]
     Terminal,
 }
 

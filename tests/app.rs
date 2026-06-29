@@ -179,7 +179,7 @@ fn first_run_and_theme_persist_to_config() {
     // Start with no data dir -> first-run mode.
     let mut app = App::new(None).unwrap();
     assert!(app.lists.is_empty());
-    assert_eq!(app.theme, ThemeKind::TokyoNight);
+    assert_eq!(app.theme, ThemeKind::Terminal);
 
     let target = dir.path().join("data");
     app.commit_first_run(target.clone());
@@ -192,27 +192,29 @@ fn first_run_and_theme_persist_to_config() {
     // The config pointer records the data dir + theme.
     let saved = config::load_config().unwrap().unwrap();
     assert_eq!(saved.data_dir, target);
-    assert_eq!(saved.theme, ThemeKind::TokyoNight);
+    assert_eq!(saved.theme, ThemeKind::Terminal);
 
     // The theme picker previews live; cancel restores the original without saving.
+    // The default theme (Terminal) is the last entry in `ThemeKind::all()`, so
+    // stepping +1 wraps around to the first entry, Tokyo Night.
     app.open_theme_picker();
     app.theme_picker_preview(1);
-    assert_eq!(app.theme, ThemeKind::CatppuccinMocha);
-    app.theme_picker_cancel();
     assert_eq!(app.theme, ThemeKind::TokyoNight);
+    app.theme_picker_cancel();
+    assert_eq!(app.theme, ThemeKind::Terminal);
     assert_eq!(
         config::load_config().unwrap().unwrap().theme,
-        ThemeKind::TokyoNight
+        ThemeKind::Terminal
     );
 
     // Confirming applies and persists the highlighted theme.
     app.open_theme_picker();
     app.theme_picker_preview(1);
     app.theme_picker_confirm();
-    assert_eq!(app.theme, ThemeKind::CatppuccinMocha);
+    assert_eq!(app.theme, ThemeKind::TokyoNight);
     assert_eq!(
         config::load_config().unwrap().unwrap().theme,
-        ThemeKind::CatppuccinMocha
+        ThemeKind::TokyoNight
     );
 
     // Relocating moves the lists to a new dir and repoints the config.
@@ -229,7 +231,7 @@ fn first_run_and_theme_persist_to_config() {
     assert_eq!(app.current_task().unwrap().title, "keep me");
     let saved = config::load_config().unwrap().unwrap();
     assert_eq!(saved.data_dir, moved);
-    assert_eq!(saved.theme, ThemeKind::CatppuccinMocha); // theme preserved
+    assert_eq!(saved.theme, ThemeKind::TokyoNight); // theme preserved
 
     unsafe { std::env::remove_var("TUDO_CONFIG") };
 }
