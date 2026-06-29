@@ -19,6 +19,12 @@ use tudo::{config, event, ui};
 type Term = Terminal<CrosstermBackend<Stdout>>;
 
 fn main() -> Result<()> {
+    // Handle `--version` / `-V` before touching the terminal.
+    if std::env::args().skip(1).any(|a| a == "--version" || a == "-V") {
+        println!("{} {}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
+
     let (data_dir, mut theme) = match config::resolve()? {
         Startup::Open { data_dir, theme } => (Some(data_dir), theme),
         Startup::FirstRun { theme } => (None, theme),

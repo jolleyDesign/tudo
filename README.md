@@ -40,6 +40,10 @@ This grabs the right binary for your platform from the latest
 `~/.local/bin`. Set `TUDO_INSTALL_DIR` to install somewhere else, or
 `TUDO_VERSION` (e.g. `v0.1.0`) to pin a specific version.
 
+**Updating:** re-run the install command above to upgrade to the latest
+release — it overwrites the existing binary in place. Check what you're running
+with `tudo --version`.
+
 ### With Cargo
 
 If you have a Rust toolchain (1.95+):
