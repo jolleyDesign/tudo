@@ -3,7 +3,7 @@
 //! help / first-run). Clickable rects are recorded into `app.clickables` for the
 //! mouse handler.
 
-use chrono::NaiveDate;
+use chrono::{Local, NaiveDate};
 use ratatui::Frame;
 use ratatui::layout::{Alignment, Constraint, Layout, Margin, Rect};
 use ratatui::style::{Modifier, Style};
@@ -322,6 +322,18 @@ fn render_detail(f: &mut Frame, area: Rect, app: &App) {
             }),
         ),
     ];
+    if task.done && let Some(at) = task.completed_at {
+        meta.push(Span::styled(
+            "   completed ",
+            Style::default().fg(theme::muted()),
+        ));
+        meta.push(Span::styled(
+            at.with_timezone(&Local)
+                .format("%d %b %Y, %H:%M")
+                .to_string(),
+            Style::default().fg(theme::green()),
+        ));
+    }
     if let Some(p) = task.priority {
         meta.push(Span::styled(
             "   priority ",
