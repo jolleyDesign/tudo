@@ -15,6 +15,7 @@ use ratatui::widgets::ListState;
 pub const STATUS_TTL: Duration = Duration::from_secs(4);
 
 use crate::config::{self, Config};
+use crate::keybind::Keymap;
 use crate::model::{self, List, Subtask, Task};
 use crate::storage;
 use crate::theme::{self, ThemeKind};
@@ -325,6 +326,8 @@ pub struct App {
     pub subtask_state: ListState,
     pub filter: Filter,
     pub theme: ThemeKind,
+    /// The resolved keybindings (built-in defaults plus any config overrides).
+    pub keymap: Keymap,
     pub status: String,
     /// When the current `status` message should auto-clear (`None` = nothing showing).
     status_expiry: Option<Instant>,
@@ -361,6 +364,7 @@ impl App {
             subtask_state: ListState::default(),
             filter: Filter::default(),
             theme,
+            keymap: Keymap::default(),
             status: String::new(),
             status_expiry: None,
             should_quit: false,
@@ -384,6 +388,26 @@ impl App {
     pub fn set_theme(&mut self, kind: ThemeKind) {
         self.theme = kind;
         theme::set(kind.theme());
+    }
+
+    /// Install the resolved keybindings (used at startup, after config load).
+    pub fn set_keymap(&mut self, keymap: Keymap) {
+        self.keymap = keymap;
+    }
+
+    /// Fill an existing config file in with every keybinding (defaults plus any
+    /// overrides) when some are missing, so the user can see and edit them all.
+    /// Won't create a config that doesn't exist yet, and skips one that already
+    /// lists every action. Call at startup after [`App::set_theme`] /
+    /// [`App::set_keymap`] so the persisted theme is correct.
+    pub fn materialize_keybindings(&mut self) {
+        if self.data_dir.as_os_str().is_empty() || self.keymap.covers_all_actions() {
+            return;
+        }
+        let config_exists = config::config_path().map(|p| p.exists()).unwrap_or(false);
+        if config_exists {
+            self.persist_config();
+        }
     }
 
     /// Open the theme picker, remembering the current theme to restore on cancel.
@@ -498,6 +522,7 @@ impl App {
         let config = Config {
             data_dir: self.data_dir.clone(),
             theme: self.theme,
+            keybindings: self.keymap.to_full_overrides(),
         };
         if let Err(e) = config::save_config(&config) {
             self.set_status(format!("theme set for this session only: {e}"));
@@ -1479,6 +1504,7 @@ impl App {
         let config = Config {
             data_dir: dir.clone(),
             theme: self.theme,
+            keybindings: self.keymap.to_full_overrides(),
         };
         if let Err(e) = config::save_config(&config) {
             self.set_status(format!("could not save config: {e}"));

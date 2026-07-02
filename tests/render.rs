@@ -4,6 +4,7 @@ use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::buffer::Buffer;
 use tudo::app::App;
+use tudo::keybind::{Keymap, Overrides};
 use tudo::ui;
 
 /// Flatten the rendered buffer into a single string for substring assertions.
@@ -132,5 +133,24 @@ fn help_overlay_lists_keybindings() {
     assert!(
         text.contains("press any key to close"),
         "help footer missing"
+    );
+}
+
+#[test]
+fn help_overlay_reflects_custom_keybindings() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = App::new(Some(dir.path().to_path_buf())).unwrap();
+    app.add_list("Work".to_string());
+
+    // Rebind search to a distinctive chord; the help must show it, not the "/".
+    let mut ov = Overrides::new();
+    ov.insert("search".to_string(), vec!["ctrl+f".to_string()]);
+    app.set_keymap(Keymap::from_overrides(ov).0);
+    app.mode = tudo::app::Mode::Help;
+
+    let text = render_to_string(&mut app, 100, 30);
+    assert!(
+        text.contains("Ctrl+f"),
+        "help should show the rebound search key: {text}"
     );
 }

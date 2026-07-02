@@ -9,6 +9,7 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+use crate::keybind::Overrides;
 use crate::theme::ThemeKind;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -16,6 +17,10 @@ pub struct Config {
     pub data_dir: PathBuf,
     #[serde(default)]
     pub theme: ThemeKind,
+    /// Optional keybinding overrides: action name -> keys. Omitted entirely when
+    /// empty so a default install's config stays minimal.
+    #[serde(default, skip_serializing_if = "Overrides::is_empty")]
+    pub keybindings: Overrides,
 }
 
 /// Location of the config pointer file.
@@ -45,16 +50,27 @@ pub fn load_config() -> Result<Option<Config>> {
 
 /// What to do at startup: open an existing data dir (with its theme) or run
 /// first-run setup. `$TUDO_DIR` overrides the saved data dir but keeps any
-/// saved theme.
+/// saved theme and keybindings.
 pub enum Startup {
-    Open { data_dir: PathBuf, theme: ThemeKind },
-    FirstRun { theme: ThemeKind },
+    Open {
+        data_dir: PathBuf,
+        theme: ThemeKind,
+        keybindings: Overrides,
+    },
+    FirstRun {
+        theme: ThemeKind,
+        keybindings: Overrides,
+    },
 }
 
 /// Resolve startup state from env + saved config.
 pub fn resolve() -> Result<Startup> {
     let saved = load_config()?;
     let saved_theme = saved.as_ref().map(|c| c.theme).unwrap_or_default();
+    let saved_keys = saved
+        .as_ref()
+        .map(|c| c.keybindings.clone())
+        .unwrap_or_default();
 
     if let Ok(p) = std::env::var("TUDO_DIR") {
         let path = PathBuf::from(p);
@@ -63,6 +79,7 @@ pub fn resolve() -> Result<Startup> {
         return Ok(Startup::Open {
             data_dir: path,
             theme: saved_theme,
+            keybindings: saved_keys,
         });
     }
     if let Some(config) = saved {
@@ -71,9 +88,13 @@ pub fn resolve() -> Result<Startup> {
         return Ok(Startup::Open {
             data_dir: config.data_dir,
             theme: config.theme,
+            keybindings: config.keybindings,
         });
     }
-    Ok(Startup::FirstRun { theme: saved_theme })
+    Ok(Startup::FirstRun {
+        theme: saved_theme,
+        keybindings: saved_keys,
+    })
 }
 
 /// Persist the config pointer (data dir + theme).

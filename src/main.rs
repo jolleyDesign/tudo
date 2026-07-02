@@ -14,6 +14,7 @@ use ratatui::crossterm::terminal::{
 
 use tudo::app::App;
 use tudo::config::Startup;
+use tudo::keybind::Keymap;
 use tudo::theme::ThemeKind;
 use tudo::{config, event, ui};
 
@@ -29,9 +30,13 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
-    let (data_dir, mut theme) = match config::resolve()? {
-        Startup::Open { data_dir, theme } => (Some(data_dir), theme),
-        Startup::FirstRun { theme } => (None, theme),
+    let (data_dir, mut theme, keybindings) = match config::resolve()? {
+        Startup::Open {
+            data_dir,
+            theme,
+            keybindings,
+        } => (Some(data_dir), theme, keybindings),
+        Startup::FirstRun { theme, keybindings } => (None, theme, keybindings),
     };
     // $TUDO_THEME overrides the saved theme for this run.
     if let Some(kind) = std::env::var("TUDO_THEME")
@@ -40,8 +45,24 @@ fn main() -> Result<()> {
     {
         theme = kind;
     }
+    let (keymap, keymap_warnings) = Keymap::from_overrides(keybindings);
     let mut app = App::new(data_dir)?;
     app.set_theme(theme);
+    app.set_keymap(keymap);
+    // Write the full set of keybindings into an existing config so the user can
+    // see and edit them all. Skipped under $TUDO_DIR (ephemeral / no config to
+    // grow) so those runs don't create or repoint the saved config.
+    if std::env::var_os("TUDO_DIR").is_none() {
+        app.materialize_keybindings();
+    }
+    // Surface any bad keybinding entries once on the status line (the config is
+    // still usable — the offending entries are just ignored).
+    if !keymap_warnings.is_empty() {
+        app.set_status(format!(
+            "{} keybinding(s) in config ignored (press S for the config path)",
+            keymap_warnings.len()
+        ));
+    }
 
     install_panic_hook();
     let mut terminal = setup_terminal()?;

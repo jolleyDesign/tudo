@@ -85,7 +85,7 @@ created so you can begin immediately.
 
 ## Keybindings
 
-Press `?` in the app for the same list grouped into an overlay.
+Press `?` in the app for the same list grouped into an overlay. All of these keys are [customizable](#customizing-keybindings) in the config file, and the help overlay always shows your current bindings.
 
 **Navigate**
 
@@ -154,7 +154,58 @@ The coloured themes are truecolor, so they look the same regardless of your term
 
 Press `S` to open the settings panel, which shows your **data directory**, the **config file** path, the storage format, the active theme, your list/task counts, and any environment overrides currently in effect.
 
-Configuration is a small **JSON** file (not TOML) - `~/.config/tudo/config.json` by default (override with `$TUDO_CONFIG`). It holds just the `data_dir` and `theme`; everything else (your actual lists) lives as separate JSON files in the data directory. To move your data, press `S` then `d`, type a new path (`~` is allowed), and `Enter` - tudo moves your list files there and repoints the config.
+Configuration is a small **JSON** file (not TOML) - `~/.config/tudo/config.json` by default (override with `$TUDO_CONFIG`). It holds the `data_dir`, the `theme`, and optional `keybindings`; everything else (your actual lists) lives as separate JSON files in the data directory. To move your data, press `S` then `d`, type a new path (`~` is allowed), and `Enter` - tudo moves your list files there and repoints the config.
+
+## Customizing keybindings
+
+tudo writes a full `keybindings` block into your `config.json` (on first run, and it fills in any missing actions on upgrade), so you don't have to author it from scratch - just edit the keys you want and restart tudo. Each entry maps an **action name** to the list of keys that trigger it; the list **replaces** that action's defaults, so include every key you want for it. For example, to add `Ctrl` alternatives to a few actions:
+
+```json
+{
+  "data_dir": "/Users/you/.local/share/tudo",
+  "theme": "dracula",
+  "keybindings": {
+    "move-down": ["j", "down", "ctrl+n"],
+    "move-up": ["k", "up", "ctrl+p"],
+    "quit": ["q", "ctrl+q"],
+    "search": ["/", "ctrl+f"]
+  }
+}
+```
+
+**Key syntax:** a single character is that key, case-sensitive (`j` vs `J`). Named keys are `space`, `tab`, `enter`, `esc`, `up`, `down`, `left`, `right`, `home`, `end`, `pageup`, `pagedown`, `backspace`, `delete`, and `insert`. Add modifiers with `ctrl+`, `alt+`, or `shift+` (e.g. `ctrl+q`, `shift+down`); for letters just use the uppercase letter (`J`) rather than `shift+j`.
+
+**Action names** (defaults in parentheses):
+
+| Action | Default | Does |
+|--------|---------|------|
+| `toggle-focus` | `tab` | switch focus between the Lists and Tasks panes |
+| `focus-lists` / `focus-tasks` | `h`/`left`, `l`/`right` | focus a specific pane |
+| `move-down` / `move-up` | `j`/`down`, `k`/`up` | move the selection |
+| `activate` | `enter` | open a task's detail / drill into a list |
+| `back` | `esc` | close a dialog / leave detail / clear the filter |
+| `toggle-done` | `space` | toggle the selected task or subtask done |
+| `reorder-down` / `reorder-up` | `J`/`shift+down`, `K`/`shift+up` | move the task down / up |
+| `send-top` / `send-bottom` | `g` / `G` | send the task to the top / bottom |
+| `move-task` | `m` | move the task to another list (also unarchives) |
+| `add-task` / `add-list` | `a` / `A` | add a task / a list |
+| `edit` | `e` | edit the task title, or rename the list |
+| `add-subtask` | `s` | add a subtask |
+| `cycle-priority` | `p` | cycle priority (none → low → med → high) |
+| `set-due` | `D` | set or clear the due date |
+| `set-tags` | `t` | edit tags |
+| `set-notes` | `n` | edit notes |
+| `archive` | `d` | archive the task; delete a list or subtask |
+| `delete` | `X` | permanently delete (asks to confirm) |
+| `search` | `/` | search titles, tags, and notes |
+| `cycle-filter` | `f` | cycle the status filter (all / active / done) |
+| `copy` | `c` | copy the selected task |
+| `theme-picker` | `T` | open the theme picker |
+| `settings` | `S` | open settings |
+| `help` | `?` | show the help overlay |
+| `quit` | `q` | quit |
+
+Notes: `Ctrl+C` always quits and can't be disabled. Only these main (Normal/Detail) keys are configurable - text entry, confirm prompts, and the pickers keep fixed keys. Entries with an unknown action name or an unrecognized key are ignored (with a brief notice when the app starts) but left untouched in your config, so a typo won't wipe the rest of your settings.
 
 ## Storage format
 
@@ -201,4 +252,4 @@ cargo clippy --all-targets
 cargo run
 ```
 
-Source layout: `model` (types), `storage` (JSON I/O), `config` (data-dir resolution), `app` (state + actions), `event` (key/mouse mapping), `ui` (rendering). The action logic and rendering are terminal-free, so they're tested directly with `tempfile` and ratatui's `TestBackend`.
+Source layout: `model` (types), `storage` (JSON I/O), `config` (data-dir resolution), `keybind` (configurable keymap), `app` (state + actions), `event` (key/mouse mapping), `ui` (rendering). The action logic and rendering are terminal-free, so they're tested directly with `tempfile` and ratatui's `TestBackend`.

@@ -6,6 +6,7 @@ use ratatui::crossterm::event::{
 
 use crate::app::{App, ConfirmAction, CopyWhat, InputField, Mode};
 use crate::config;
+use crate::keybind::Action;
 
 /// Route a key event to the handler for the current mode.
 pub fn handle_key(app: &mut App, key: KeyEvent) {
@@ -75,49 +76,53 @@ fn copy_menu_key(app: &mut App, key: KeyEvent) {
 }
 
 fn nav_key(app: &mut App, key: KeyEvent) {
+    if let Some(action) = app.keymap.action_for(key) {
+        dispatch(app, action);
+    }
+}
+
+/// Run the (mode-aware) handler for a bound [`Action`] in Normal / Detail mode.
+fn dispatch(app: &mut App, action: Action) {
     let detail = matches!(app.mode, Mode::Detail);
-    match key.code {
-        KeyCode::Char('q') => app.should_quit = true,
-        KeyCode::Char('?') => app.mode = Mode::Help,
-        KeyCode::Esc => {
+    match action {
+        Action::Quit => app.should_quit = true,
+        Action::Help => app.mode = Mode::Help,
+        Action::Back => {
             if detail {
                 app.close_overlay();
             } else if app.filter.is_active() {
                 app.clear_filter();
             }
         }
-        KeyCode::Tab => app.toggle_focus(),
-        KeyCode::Char('h') | KeyCode::Left if !detail => app.focus_lists(),
-        KeyCode::Char('l') | KeyCode::Right if !detail => app.focus_tasks(),
-        // Shift+arrows reorder the task (like J/K). Must precede the plain
-        // Up/Down arms below, which don't inspect modifiers.
-        KeyCode::Down if key.modifiers.contains(KeyModifiers::SHIFT) => app.reorder_task(1),
-        KeyCode::Up if key.modifiers.contains(KeyModifiers::SHIFT) => app.reorder_task(-1),
-        KeyCode::Char('j') | KeyCode::Down => app.move_selection(1),
-        KeyCode::Char('k') | KeyCode::Up => app.move_selection(-1),
-        KeyCode::Char('J') => app.reorder_task(1),
-        KeyCode::Char('K') => app.reorder_task(-1),
-        KeyCode::Char('g') => app.send_task(true),
-        KeyCode::Char('G') => app.send_task(false),
-        KeyCode::Char(' ') => app.toggle_selected(),
-        KeyCode::Enter => app.activate(),
-        KeyCode::Char('a') => app.start_add_task(),
-        KeyCode::Char('A') => app.start_add_list(),
-        KeyCode::Char('e') => app.start_edit(),
-        KeyCode::Char('d') => app.delete_or_archive(),
-        KeyCode::Char('X') => app.start_delete(),
-        KeyCode::Char('p') => app.cycle_current_priority(),
-        KeyCode::Char('D') => app.start_set_due(),
-        KeyCode::Char('t') => app.start_set_tags(),
-        KeyCode::Char('n') => app.start_set_notes(),
-        KeyCode::Char('s') => app.start_add_subtask(),
-        KeyCode::Char('m') => app.start_move_task(),
-        KeyCode::Char('c') => app.start_copy(),
-        KeyCode::Char('/') => app.start_search(),
-        KeyCode::Char('f') => app.cycle_status_filter(),
-        KeyCode::Char('T') => app.open_theme_picker(),
-        KeyCode::Char('S') => app.open_settings(),
-        _ => {}
+        Action::ToggleFocus => app.toggle_focus(),
+        // Pane focus is meaningless inside a task's detail view.
+        Action::FocusLists if !detail => app.focus_lists(),
+        Action::FocusTasks if !detail => app.focus_tasks(),
+        Action::FocusLists | Action::FocusTasks => {}
+        Action::MoveDown => app.move_selection(1),
+        Action::MoveUp => app.move_selection(-1),
+        Action::ReorderDown => app.reorder_task(1),
+        Action::ReorderUp => app.reorder_task(-1),
+        Action::SendTop => app.send_task(true),
+        Action::SendBottom => app.send_task(false),
+        Action::ToggleDone => app.toggle_selected(),
+        Action::Activate => app.activate(),
+        Action::AddTask => app.start_add_task(),
+        Action::AddList => app.start_add_list(),
+        Action::Edit => app.start_edit(),
+        Action::Archive => app.delete_or_archive(),
+        Action::Delete => app.start_delete(),
+        Action::CyclePriority => app.cycle_current_priority(),
+        Action::SetDue => app.start_set_due(),
+        Action::SetTags => app.start_set_tags(),
+        Action::SetNotes => app.start_set_notes(),
+        Action::AddSubtask => app.start_add_subtask(),
+        Action::MoveTask => app.start_move_task(),
+        Action::Copy => app.start_copy(),
+        Action::Search => app.start_search(),
+        Action::CycleFilter => app.cycle_status_filter(),
+        Action::ThemePicker => app.open_theme_picker(),
+        Action::Settings => app.open_settings(),
     }
 }
 

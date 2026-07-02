@@ -14,6 +14,7 @@ use ratatui::widgets::{
 };
 
 use crate::app::{App, Focus, Mode};
+use crate::keybind::Action;
 use crate::model::Task;
 use crate::theme;
 
@@ -445,11 +446,15 @@ fn render_footer(f: &mut Frame, area: Rect, app: &App) {
     );
 
     // Keep the footer minimal: just the escape hatches. The full keybinding
-    // list lives in the `?` help overlay.
-    let chips: &[(&str, &str)] = if matches!(app.mode, Mode::Detail) {
-        &[("Esc", "back"), ("?", "help")]
+    // list lives in the `?` help overlay. Keys come from the live keymap so
+    // custom bindings show correctly.
+    let help_key = primary_key(app, Action::Help);
+    let quit_key = primary_key(app, Action::Quit);
+    let back_key = primary_key(app, Action::Back);
+    let chips: Vec<(&str, &str)> = if matches!(app.mode, Mode::Detail) {
+        vec![(back_key.as_str(), " back"), (help_key.as_str(), " help")]
     } else {
-        &[("?", "help"), ("q", "uit")]
+        vec![(help_key.as_str(), " help"), (quit_key.as_str(), " quit")]
     };
 
     let mut right = String::new();
@@ -469,7 +474,7 @@ fn render_footer(f: &mut Frame, area: Rect, app: &App) {
     let [left_area, right_area] =
         Layout::horizontal([Constraint::Min(10), Constraint::Length(right_w)]).areas(area);
 
-    f.render_widget(Paragraph::new(chip_line(chips)), left_area);
+    f.render_widget(Paragraph::new(chip_line(&chips)), left_area);
     f.render_widget(
         Paragraph::new(Line::from(Span::styled(
             right,
@@ -553,7 +558,28 @@ fn render_confirm(f: &mut Frame, app: &App) {
     );
 }
 
-fn render_help(f: &mut Frame, _app: &App) {
+/// Space-joined labels for every chord bound to the given actions, e.g.
+/// `[MoveDown, MoveUp]` -> "j ↓ k ↑". Reads the live keymap so the help stays
+/// truthful after the user customizes their bindings.
+fn keys_for(app: &App, actions: &[Action]) -> String {
+    let mut parts = Vec::new();
+    for &action in actions {
+        for chord in app.keymap.chords_for(action) {
+            parts.push(chord.display());
+        }
+    }
+    parts.join(" ")
+}
+
+/// The first (primary) bound key for an action, for compact one-key hints.
+fn primary_key(app: &App, action: Action) -> String {
+    app.keymap
+        .primary(action)
+        .map(|c| c.display())
+        .unwrap_or_default()
+}
+
+fn render_help(f: &mut Frame, app: &App) {
     let area = centered_rect_cols(f.area(), 68, 23);
     overlay_clear(f, area);
     let block = overlay_block("Keybindings", theme::accent());
@@ -590,44 +616,71 @@ fn render_help(f: &mut Frame, _app: &App) {
     const LW: usize = 12;
     let left_lines = vec![
         header("Navigate"),
-        row("Tab h/l \u{2190}\u{2192}", "switch pane", LW),
-        row("j k \u{2191}\u{2193}", "move cursor", LW),
-        row("Enter", "open / drill in", LW),
-        row("Esc", "back / clear", LW),
+        row(
+            &keys_for(
+                app,
+                &[Action::ToggleFocus, Action::FocusLists, Action::FocusTasks],
+            ),
+            "switch pane",
+            LW,
+        ),
+        row(
+            &keys_for(app, &[Action::MoveDown, Action::MoveUp]),
+            "move cursor",
+            LW,
+        ),
+        row(&keys_for(app, &[Action::Activate]), "open / drill in", LW),
+        row(&keys_for(app, &[Action::Back]), "back / clear", LW),
         Line::raw(""),
         header("Organize"),
-        row("space", "toggle done", LW),
-        row("J K \u{21e7}\u{2191}\u{2193}", "move up / down", LW),
-        row("g G", "to top / bottom", LW),
-        row("m", "move / unarchive", LW),
+        row(&keys_for(app, &[Action::ToggleDone]), "toggle done", LW),
+        row(
+            &keys_for(app, &[Action::ReorderDown, Action::ReorderUp]),
+            "move up / down",
+            LW,
+        ),
+        row(
+            &keys_for(app, &[Action::SendTop, Action::SendBottom]),
+            "to top / bottom",
+            LW,
+        ),
+        row(&keys_for(app, &[Action::MoveTask]), "move / unarchive", LW),
         Line::raw(""),
         header("Find"),
-        row("/", "search", LW),
-        row("f", "cycle filter", LW),
-        row("c", "copy task", LW),
+        row(&keys_for(app, &[Action::Search]), "search", LW),
+        row(&keys_for(app, &[Action::CycleFilter]), "cycle filter", LW),
+        row(&keys_for(app, &[Action::Copy]), "copy task", LW),
     ];
 
     const RW: usize = 5;
     let right_lines = vec![
         header("Create & edit"),
-        row("a A", "add task / list", RW),
-        row("e", "edit / rename", RW),
-        row("s", "add subtask", RW),
+        row(
+            &keys_for(app, &[Action::AddTask, Action::AddList]),
+            "add task / list",
+            RW,
+        ),
+        row(&keys_for(app, &[Action::Edit]), "edit / rename", RW),
+        row(&keys_for(app, &[Action::AddSubtask]), "add subtask", RW),
         Line::raw(""),
         header("Details"),
-        row("p", "priority", RW),
-        row("D", "due date", RW),
-        row("t", "tags", RW),
-        row("n", "notes", RW),
+        row(&keys_for(app, &[Action::CyclePriority]), "priority", RW),
+        row(&keys_for(app, &[Action::SetDue]), "due date", RW),
+        row(&keys_for(app, &[Action::SetTags]), "tags", RW),
+        row(&keys_for(app, &[Action::SetNotes]), "notes", RW),
         Line::raw(""),
         header("Remove"),
-        row("d", "archive task", RW),
-        row("X", "delete (confirm)", RW),
+        row(&keys_for(app, &[Action::Archive]), "archive task", RW),
+        row(&keys_for(app, &[Action::Delete]), "delete (confirm)", RW),
         Line::raw(""),
         header("App"),
-        row("T", "theme", RW),
-        row("S", "settings", RW),
-        row("? q", "help / quit", RW),
+        row(&keys_for(app, &[Action::ThemePicker]), "theme", RW),
+        row(&keys_for(app, &[Action::Settings]), "settings", RW),
+        row(
+            &keys_for(app, &[Action::Help, Action::Quit]),
+            "help / quit",
+            RW,
+        ),
     ];
 
     f.render_widget(Paragraph::new(Text::from(left_lines)), left);

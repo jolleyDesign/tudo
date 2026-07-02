@@ -2,10 +2,12 @@
 
 use std::path::PathBuf;
 
-use tudo::app::{App, CopyWhat, Mode, StatusFilter};
+use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use tudo::app::{App, CopyWhat, InputField, Mode, StatusFilter};
+use tudo::keybind::{Keymap, Overrides};
 use tudo::model::Priority;
 use tudo::theme::ThemeKind;
-use tudo::{config, storage};
+use tudo::{config, event, storage};
 
 fn app_in(dir: &std::path::Path) -> App {
     App::new(Some(dir.to_path_buf())).unwrap()
@@ -642,4 +644,83 @@ fn add_task_without_list_is_a_noop_with_hint() {
     app.start_add_task();
     assert!(!app.status.is_empty());
     let _ = PathBuf::new();
+}
+
+#[test]
+fn custom_keybindings_drive_actions_through_the_event_handler() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app_in(dir.path());
+    app.add_list("L".to_string());
+
+    // Rebind quit onto 'x' and add-task onto 'n' (which normally edits notes).
+    let mut ov = Overrides::new();
+    ov.insert("quit".to_string(), vec!["x".to_string()]);
+    ov.insert("add-task".to_string(), vec!["n".to_string()]);
+    let (km, warnings) = Keymap::from_overrides(ov);
+    assert!(warnings.is_empty(), "warnings: {warnings:?}");
+    app.set_keymap(km);
+
+    // 'q' no longer quits now that quit lives on 'x'.
+    event::handle_key(&mut app, KeyEvent::from(KeyCode::Char('q')));
+    assert!(!app.should_quit, "'q' should not quit after rebinding");
+
+    // 'n' opens the add-task input rather than the notes editor.
+    event::handle_key(&mut app, KeyEvent::from(KeyCode::Char('n')));
+    match &app.mode {
+        Mode::Input(state) => assert_eq!(state.field, InputField::NewTask),
+        other => panic!("expected the add-task input, got {other:?}"),
+    }
+    app.close_overlay();
+
+    // 'x' now quits.
+    event::handle_key(&mut app, KeyEvent::from(KeyCode::Char('x')));
+    assert!(app.should_quit, "'x' should quit after rebinding");
+}
+
+#[test]
+fn ctrl_c_always_quits_even_when_rebound() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app_in(dir.path());
+
+    // Point quit somewhere else entirely; Ctrl+C is a hardcoded safety net.
+    let mut ov = Overrides::new();
+    ov.insert("quit".to_string(), vec!["x".to_string()]);
+    app.set_keymap(Keymap::from_overrides(ov).0);
+
+    event::handle_key(
+        &mut app,
+        KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL),
+    );
+    assert!(app.should_quit, "Ctrl+C must always quit");
+}
+
+#[test]
+fn config_round_trips_keybindings() {
+    let mut kb = Overrides::new();
+    kb.insert(
+        "quit".to_string(),
+        vec!["x".to_string(), "ctrl+q".to_string()],
+    );
+    let cfg = config::Config {
+        data_dir: PathBuf::from("/tmp/tudo-data"),
+        theme: ThemeKind::Dracula,
+        keybindings: kb.clone(),
+    };
+    let json = serde_json::to_string_pretty(&cfg).unwrap();
+    assert!(json.contains("keybindings"), "keybindings missing: {json}");
+    let back: config::Config = serde_json::from_str(&json).unwrap();
+    assert_eq!(back.keybindings, kb);
+
+    // An older/minimal config with no keybindings still loads (defaults empty).
+    let minimal = r#"{"data_dir":"/tmp/x","theme":"nord"}"#;
+    let parsed: config::Config = serde_json::from_str(minimal).unwrap();
+    assert!(parsed.keybindings.is_empty());
+    // And a default config omits the field entirely to stay minimal on disk.
+    let empty = config::Config {
+        data_dir: PathBuf::from("/tmp/x"),
+        theme: ThemeKind::Terminal,
+        keybindings: Overrides::new(),
+    };
+    let json = serde_json::to_string(&empty).unwrap();
+    assert!(!json.contains("keybindings"), "empty map should be omitted");
 }

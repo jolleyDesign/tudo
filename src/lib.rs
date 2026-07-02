@@ -7,6 +7,7 @@ pub mod app;
 pub mod clipboard;
 pub mod config;
 pub mod event;
+pub mod keybind;
 pub mod model;
 pub mod storage;
 pub mod theme;
