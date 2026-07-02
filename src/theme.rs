@@ -68,6 +68,7 @@ pub enum ThemeKind {
     Dracula,
     Nord,
     GruvboxDark,
+    GruvboxMaterial,
     SolarizedDark,
     OneDark,
     RosePine,
@@ -78,13 +79,14 @@ pub enum ThemeKind {
 }
 
 impl ThemeKind {
-    pub fn all() -> [ThemeKind; 11] {
+    pub fn all() -> [ThemeKind; 12] {
         [
             ThemeKind::TokyoNight,
             ThemeKind::CatppuccinMocha,
             ThemeKind::Dracula,
             ThemeKind::Nord,
             ThemeKind::GruvboxDark,
+            ThemeKind::GruvboxMaterial,
             ThemeKind::SolarizedDark,
             ThemeKind::OneDark,
             ThemeKind::RosePine,
@@ -101,6 +103,7 @@ impl ThemeKind {
             ThemeKind::Dracula => "Dracula",
             ThemeKind::Nord => "Nord",
             ThemeKind::GruvboxDark => "Gruvbox Dark",
+            ThemeKind::GruvboxMaterial => "Gruvbox Material",
             ThemeKind::SolarizedDark => "Solarized Dark",
             ThemeKind::OneDark => "One Dark",
             ThemeKind::RosePine => "Rosé Pine",
@@ -125,6 +128,7 @@ impl ThemeKind {
             "dracula" => Some(ThemeKind::Dracula),
             "nord" => Some(ThemeKind::Nord),
             "gruvbox-dark" | "gruvbox" => Some(ThemeKind::GruvboxDark),
+            "gruvbox-material" | "gruvboxmaterial" | "material" => Some(ThemeKind::GruvboxMaterial),
             "solarized-dark" | "solarized" => Some(ThemeKind::SolarizedDark),
             "one-dark" | "onedark" | "one" => Some(ThemeKind::OneDark),
             "rose-pine" | "rosepine" | "rose" => Some(ThemeKind::RosePine),
@@ -144,6 +148,7 @@ impl ThemeKind {
             ThemeKind::Dracula => DRACULA,
             ThemeKind::Nord => NORD,
             ThemeKind::GruvboxDark => GRUVBOX_DARK,
+            ThemeKind::GruvboxMaterial => GRUVBOX_MATERIAL,
             ThemeKind::SolarizedDark => SOLARIZED_DARK,
             ThemeKind::OneDark => ONE_DARK,
             ThemeKind::RosePine => ROSE_PINE,
@@ -216,6 +221,23 @@ pub const GRUVBOX_DARK: Theme = Theme {
     amber: rgb(254, 128, 25),
     red: rgb(251, 73, 52),
     teal: rgb(142, 192, 124),
+};
+
+/// Gruvbox Material (dark, medium background) — the softened, lower-saturation
+/// take on Gruvbox designed to reduce eye strain.
+pub const GRUVBOX_MATERIAL: Theme = Theme {
+    bg: rgb(40, 40, 40),        // bg0 #282828
+    surface: rgb(29, 32, 33),   // bg_dim #1d2021
+    sel: rgb(69, 64, 61),       // bg4 #45403d
+    sel_dim: rgb(50, 48, 47),   // bg1 #32302f
+    fg: rgb(212, 190, 152),     // fg0 #d4be98
+    muted: rgb(146, 131, 116),  // grey1 #928374
+    accent: rgb(216, 166, 87),  // yellow #d8a657
+    purple: rgb(211, 134, 155), // purple #d3869b
+    green: rgb(169, 182, 101),  // green #a9b665
+    amber: rgb(231, 138, 78),   // orange #e78a4e
+    red: rgb(234, 105, 98),     // red #ea6962
+    teal: rgb(137, 180, 130),   // aqua #89b482
 };
 
 pub const DRACULA: Theme = Theme {

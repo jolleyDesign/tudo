@@ -130,6 +130,10 @@ fn theme_kinds_parse_and_cycle() {
     assert_eq!(ThemeKind::from_key("dracula"), Some(ThemeKind::Dracula));
     assert_eq!(ThemeKind::from_key("rose-pine"), Some(ThemeKind::RosePine));
     assert_eq!(
+        ThemeKind::from_key("gruvbox-material"),
+        Some(ThemeKind::GruvboxMaterial)
+    );
+    assert_eq!(
         ThemeKind::from_key("black and white"),
         Some(ThemeKind::BlackWhite)
     );
@@ -139,7 +143,7 @@ fn theme_kinds_parse_and_cycle() {
 
     // next() wraps through every theme.
     let n = ThemeKind::all().len();
-    assert_eq!(n, 11);
+    assert_eq!(n, 12);
     let mut k = ThemeKind::default();
     let mut seen = vec![k];
     for _ in 0..n {

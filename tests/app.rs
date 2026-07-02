@@ -272,7 +272,8 @@ fn reorder_task_steps_past_hidden_tasks_under_filter() {
     app.select_task_visible(1);
     assert_eq!(app.current_task().unwrap().title, "c");
     app.reorder_task(-1);
-    let raw: Vec<String> = app.current_list()
+    let raw: Vec<String> = app
+        .current_list()
         .unwrap()
         .tasks
         .iter()

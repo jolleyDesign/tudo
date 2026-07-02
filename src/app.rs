@@ -888,11 +888,12 @@ impl App {
     /// Sort user lists by name (case-insensitive) and pin the Archived list to
     /// the bottom. A no-op ordering-wise when no archive exists.
     fn sort_lists(&mut self) {
-        self.lists.sort_by(|a, b| match (a.is_archive(), b.is_archive()) {
-            (true, false) => std::cmp::Ordering::Greater,
-            (false, true) => std::cmp::Ordering::Less,
-            _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
-        });
+        self.lists
+            .sort_by(|a, b| match (a.is_archive(), b.is_archive()) {
+                (true, false) => std::cmp::Ordering::Greater,
+                (false, true) => std::cmp::Ordering::Less,
+                _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
+            });
     }
 
     /// Create the Archived list (on disk and in memory) if it doesn't exist yet.

@@ -92,7 +92,10 @@ fn copy_menu_lists_copy_options() {
     assert!(text.contains("Copy"), "copy menu title missing: {text}");
     assert!(text.contains("Ship the TUI"), "task title missing in menu");
     assert!(text.contains("Full task (JSON)"), "JSON option missing");
-    assert!(text.contains("Description (notes)"), "description option missing");
+    assert!(
+        text.contains("Description (notes)"),
+        "description option missing"
+    );
     assert!(text.contains("Enter copy"), "menu hint missing");
 }
 
@@ -121,7 +124,13 @@ fn help_overlay_lists_keybindings() {
     let text = render_to_string(&mut app, 100, 30);
     assert!(text.contains("Keybindings"), "help title missing");
     // Grouped, two-column layout: check a section header and a binding.
-    assert!(text.contains("Navigate"), "help section header missing: {text}");
+    assert!(
+        text.contains("Navigate"),
+        "help section header missing: {text}"
+    );
     assert!(text.contains("priority"), "help body missing");
-    assert!(text.contains("press any key to close"), "help footer missing");
+    assert!(
+        text.contains("press any key to close"),
+        "help footer missing"
+    );
 }

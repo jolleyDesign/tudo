@@ -330,7 +330,9 @@ fn render_detail(f: &mut Frame, area: Rect, app: &App) {
             }),
         ),
     ];
-    if task.done && let Some(at) = task.completed_at {
+    if task.done
+        && let Some(at) = task.completed_at
+    {
         meta.push(Span::styled(
             "   completed ",
             Style::default().fg(theme::muted()),
@@ -560,8 +562,7 @@ fn render_help(f: &mut Frame, _app: &App) {
 
     // Grouped bindings in two columns above a one-line footer, so the whole
     // cheat-sheet stays short enough to fit a typical terminal.
-    let [body, footer] =
-        Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(inner);
+    let [body, footer] = Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(inner);
     let [left, right] =
         Layout::horizontal([Constraint::Percentage(56), Constraint::Percentage(44)]).areas(body);
 
@@ -578,7 +579,9 @@ fn render_help(f: &mut Frame, _app: &App) {
         Line::from(vec![
             Span::styled(
                 format!("{keys:<kw$}"),
-                Style::default().fg(theme::fg()).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(theme::fg())
+                    .add_modifier(Modifier::BOLD),
             ),
             Span::styled(desc.to_string(), Style::default().fg(theme::muted())),
         ])

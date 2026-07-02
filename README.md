@@ -143,8 +143,8 @@ from today). An empty value clears the date.
 
 ## Themes
 
-Press `T` to open the **theme picker**: browse with `↑/↓` to preview each theme live across the whole UI, `Enter` to apply, `Esc` to revert. Eleven palettes are built in - **Tokyo Night**, **Catppuccin Mocha**, **Dracula**,
-**Nord**, **Gruvbox Dark**, **Solarized Dark**, **One Dark**, **Rosé Pine**,
+Press `T` to open the **theme picker**: browse with `↑/↓` to preview each theme live across the whole UI, `Enter` to apply, `Esc` to revert. Twelve palettes are built in - **Tokyo Night**, **Catppuccin Mocha**, **Dracula**,
+**Nord**, **Gruvbox Dark**, **Gruvbox Material**, **Solarized Dark**, **One Dark**, **Rosé Pine**,
 **Gotham**, **Black & White**, and **Terminal** (default). Your choice is
 remembered in the config pointer.
 
@@ -190,8 +190,8 @@ Edit these by hand or keep them in a git repo - they're just text.
   scoping tasks to a project or for scripting).
 - `TUDO_CONFIG` - override the location of the config pointer file.
 - `TUDO_THEME` - override the theme for one run (`tokyo-night`, `catppuccin`,
-  `dracula`, `nord`, `gruvbox`, `solarized`, `one-dark`, `rose-pine`, `gotham`,
-  `black-white`, or `none`/`terminal`).
+  `dracula`, `nord`, `gruvbox`, `gruvbox-material`, `solarized`, `one-dark`,
+  `rose-pine`, `gotham`, `black-white`, or `none`/`terminal`).
 
 ## Development
 

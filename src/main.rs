@@ -21,7 +21,10 @@ type Term = Terminal<CrosstermBackend<Stdout>>;
 
 fn main() -> Result<()> {
     // Handle `--version` / `-V` before touching the terminal.
-    if std::env::args().skip(1).any(|a| a == "--version" || a == "-V") {
+    if std::env::args()
+        .skip(1)
+        .any(|a| a == "--version" || a == "-V")
+    {
         println!("{} {}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
         return Ok(());
     }
