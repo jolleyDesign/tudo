@@ -31,6 +31,54 @@ fn add_list_then_task_persists_to_disk() {
 }
 
 #[test]
+fn rename_list_persists_and_keeps_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app_in(dir.path());
+
+    app.add_list("Work".to_string());
+    app.add_task("keep me".to_string());
+    let slug = app.current_list().unwrap().slug.clone();
+
+    app.rename_current_list("Career".to_string());
+    assert_eq!(app.current_list().unwrap().name, "Career");
+    // The on-disk file (slug) is unchanged; tasks are preserved.
+    assert_eq!(app.current_list().unwrap().slug, slug);
+    assert!(dir.path().join(format!("{slug}.json")).exists());
+
+    // Reload from disk: the new name persisted, the task survived.
+    let reloaded = app_in(dir.path());
+    assert_eq!(reloaded.lists.len(), 1);
+    assert_eq!(reloaded.lists[0].name, "Career");
+    assert_eq!(reloaded.lists[0].tasks[0].title, "keep me");
+}
+
+#[test]
+fn rename_list_resorts_and_follows_selection() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app_in(dir.path());
+    // Sorted by name: "Inbox" (0) then "Work" (1).
+    app.add_list("Inbox".to_string());
+    app.add_list("Work".to_string());
+    app.select_list_index(0);
+    assert_eq!(app.current_list().unwrap().name, "Inbox");
+
+    // Rename "Inbox" -> "Zebra": it now sorts last, and stays selected.
+    app.rename_current_list("Zebra".to_string());
+    assert_eq!(app.current_list().unwrap().name, "Zebra");
+    assert_eq!(app.selected_list(), 1);
+}
+
+#[test]
+fn rename_list_ignores_blank_name() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app_in(dir.path());
+    app.add_list("Work".to_string());
+
+    app.rename_current_list("   ".to_string());
+    assert_eq!(app.current_list().unwrap().name, "Work");
+}
+
+#[test]
 fn toggle_done_sets_and_clears_completion() {
     let dir = tempfile::tempdir().unwrap();
     let mut app = app_in(dir.path());
@@ -154,6 +202,85 @@ fn move_task_to_another_list_persists_and_clamps() {
     assert_eq!(inbox.tasks.len(), 1);
     assert_eq!(work.tasks.len(), 1);
     assert_eq!(work.tasks[0].title, "b");
+}
+
+#[test]
+fn reorder_and_send_task_within_list_persists() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app_in(dir.path());
+    app.add_list("L".to_string());
+    app.add_task("a".to_string());
+    app.add_task("b".to_string());
+    app.add_task("c".to_string());
+    let titles = |app: &App| -> Vec<String> {
+        app.current_list()
+            .unwrap()
+            .tasks
+            .iter()
+            .map(|t| t.title.clone())
+            .collect()
+    };
+
+    // Select "b" (middle) and nudge it up: [a, b, c] -> [b, a, c].
+    app.select_task_visible(1);
+    app.reorder_task(-1);
+    assert_eq!(titles(&app), ["b", "a", "c"]);
+    // Selection follows the moved task.
+    assert_eq!(app.current_task().unwrap().title, "b");
+
+    // Nudging up again at the top edge is a no-op.
+    app.reorder_task(-1);
+    assert_eq!(titles(&app), ["b", "a", "c"]);
+
+    // Send it to the bottom: [b, a, c] -> [a, c, b], still selected.
+    app.send_task(false);
+    assert_eq!(titles(&app), ["a", "c", "b"]);
+    assert_eq!(app.current_task().unwrap().title, "b");
+
+    // Send it back to the top: [a, c, b] -> [b, a, c].
+    app.send_task(true);
+    assert_eq!(titles(&app), ["b", "a", "c"]);
+    assert_eq!(app.current_task().unwrap().title, "b");
+
+    // The new order round-trips through disk.
+    let reloaded = app_in(dir.path());
+    let order: Vec<String> = reloaded.lists[0]
+        .tasks
+        .iter()
+        .map(|t| t.title.clone())
+        .collect();
+    assert_eq!(order, ["b", "a", "c"]);
+}
+
+#[test]
+fn reorder_task_steps_past_hidden_tasks_under_filter() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app_in(dir.path());
+    app.add_list("L".to_string());
+    app.add_task("a".to_string());
+    app.add_task("b".to_string());
+    app.add_task("c".to_string());
+
+    // Mark "b" done, then filter to active: visible = [a, c] (raw 0 and 2).
+    app.select_task_visible(1);
+    app.toggle_current_done();
+    app.cycle_status_filter(); // -> active
+    assert_eq!(app.visible_task_indices(), vec![0, 2]);
+
+    // Move "c" (visible index 1) up past the hidden "b": raw order becomes
+    // [c, b, a], and "c" is now the first visible task.
+    app.select_task_visible(1);
+    assert_eq!(app.current_task().unwrap().title, "c");
+    app.reorder_task(-1);
+    let raw: Vec<String> = app.current_list()
+        .unwrap()
+        .tasks
+        .iter()
+        .map(|t| t.title.clone())
+        .collect();
+    assert_eq!(raw, ["c", "b", "a"]);
+    assert_eq!(app.selected_visible_task(), 0);
+    assert_eq!(app.current_task().unwrap().title, "c");
 }
 
 #[test]

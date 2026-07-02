@@ -30,6 +30,7 @@ pub enum Focus {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InputField {
     NewList,
+    RenameList,
     NewTask,
     EditTask,
     Tags,
@@ -748,6 +749,30 @@ impl App {
         self.focus = Focus::Lists;
     }
 
+    /// Rename the currently selected list, keeping its on-disk file (slug) as-is.
+    /// Re-sorts by name afterwards and keeps the renamed list selected.
+    pub fn rename_current_list(&mut self, name: String) {
+        let name = name.trim().to_string();
+        if name.is_empty() {
+            return;
+        }
+        let li = self.selected_list();
+        let slug = match self.lists.get_mut(li) {
+            Some(list) => {
+                list.name = name;
+                list.slug.clone()
+            }
+            None => return,
+        };
+        self.save_list_at(li);
+        self.lists.sort_by_key(|a| a.name.to_lowercase());
+        // Re-select the renamed list (its slug is stable across the rename).
+        let pos = self.lists.iter().position(|l| l.slug == slug).unwrap_or(li);
+        self.list_state.select(Some(pos));
+        self.task_state.select(Some(0));
+        self.focus = Focus::Lists;
+    }
+
     pub fn add_task(&mut self, title: String) {
         let title = title.trim().to_string();
         if title.is_empty() {
@@ -846,6 +871,59 @@ impl App {
             self.task_state.select(Some(0));
         }
         self.focus = Focus::Lists;
+    }
+
+    // --- reorder tasks within a list -----------------------------------------
+
+    /// Swap the selected task with the visible task `delta` slots away
+    /// (-1 = up, +1 = down) and persist. Works in terms of the visible list so
+    /// it stays intuitive under a filter; a no-op at the ends, off the task
+    /// pane, or in a task's detail view.
+    pub fn reorder_task(&mut self, delta: isize) {
+        if self.focus != Focus::Tasks || self.in_detail() {
+            return;
+        }
+        let vis = self.visible_task_indices();
+        let v = self.selected_visible_task();
+        let target = v as isize + delta;
+        if target < 0 || target >= vis.len() as isize {
+            return;
+        }
+        let target = target as usize;
+        let li = self.selected_list();
+        let Some(list) = self.lists.get_mut(li) else {
+            return;
+        };
+        list.tasks.swap(vis[v], vis[target]);
+        self.save_list_at(li);
+        self.task_state.select(Some(target));
+    }
+
+    /// Move the selected task to the first (`to_top`) or last visible position
+    /// and persist. A no-op with fewer than two visible tasks, off the task
+    /// pane, or in detail view.
+    pub fn send_task(&mut self, to_top: bool) {
+        if self.focus != Focus::Tasks || self.in_detail() {
+            return;
+        }
+        let vis = self.visible_task_indices();
+        if vis.len() < 2 {
+            return;
+        }
+        let from = vis[self.selected_visible_task()];
+        // Insertion point (raw index) once `from` is spliced out: the current
+        // first visible slot for a hoist, the current last for a sink. Both stay
+        // valid after the removal because `from` lies within [first, last].
+        let dest = if to_top { vis[0] } else { *vis.last().unwrap() };
+        let li = self.selected_list();
+        let Some(list) = self.lists.get_mut(li) else {
+            return;
+        };
+        let task = list.tasks.remove(from);
+        list.tasks.insert(dest, task);
+        self.save_list_at(li);
+        self.task_state
+            .select(Some(if to_top { 0 } else { vis.len() - 1 }));
     }
 
     // --- move a task to another list -----------------------------------------
@@ -1119,7 +1197,28 @@ impl App {
         ));
     }
 
+    /// Open the input to rename the selected list (prefilled with its name).
+    pub fn start_rename_list(&mut self) {
+        let Some(list) = self.current_list() else {
+            return;
+        };
+        let name = list.name.clone();
+        self.mode = Mode::Input(InputState::new(
+            InputField::RenameList,
+            "Rename list",
+            name,
+            false,
+            false,
+        ));
+    }
+
     pub fn start_edit(&mut self) {
+        // With the lists pane focused (and not in a task's detail view), `e`
+        // renames the list rather than editing a task title.
+        if !self.in_detail() && self.focus == Focus::Lists {
+            self.start_rename_list();
+            return;
+        }
         if self.in_detail()
             && let Some(si) = self.selected_subtask()
         {

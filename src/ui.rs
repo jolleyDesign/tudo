@@ -554,10 +554,12 @@ fn render_help(f: &mut Frame, _app: &App) {
     let rows = [
         ("Tab / h l / arrows", "switch focus between panes"),
         ("j k / up down", "move selection"),
+        ("J / K", "move task down / up in the list"),
+        ("g / G", "send task to top / bottom"),
         ("space", "toggle task (or subtask) done"),
         ("Enter", "open task detail / drill into list"),
         ("a / A", "add task / add list"),
-        ("e", "edit selected title"),
+        ("e", "edit task title / rename list"),
         ("d", "delete selected (with confirm)"),
         ("p", "cycle priority"),
         ("D", "set / clear due date"),

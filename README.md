@@ -9,6 +9,8 @@ A fast, local-first todo list for your terminal. Fully keyboard-driven (with mou
 - **Multiple lists / projects**: switch between named lists in the sidebar.
 - **Rich tasks**: priority, due date, tags, free-text notes, and one level of
   checkable subtasks.
+- **Reorder freely**: nudge a task up/down or send it straight to the top or
+  bottom of its list.
 - **Keyboard first, mouse friendly**: vim keys and arrow keys; click rows,
   click a checkbox to toggle, scroll to move.
 - **Search & filter**: substring search across titles/tags/notes and a
@@ -90,10 +92,12 @@ created so you can begin immediately.
 |-----|--------|
 | `Tab`, `h`/`l`, `←`/`→` | switch focus between the Lists and Tasks panes |
 | `j`/`k`, `↑`/`↓` | move the selection |
+| `J`/`K` | move the selected task down / up within the list |
+| `g`/`G` | send the selected task to the top / bottom of the list |
 | `Space` | toggle the selected task (or subtask) done |
 | `Enter` | open a task's detail view / drill into a list |
 | `a` / `A` | add a task / add a list |
-| `e` | edit the selected title |
+| `e` | edit the selected task's title, or rename the list when the Lists pane is focused |
 | `d` | delete the selected item (asks to confirm) |
 | `p` | cycle priority (none → low → med → high) |
 | `D` | set or clear the due date |

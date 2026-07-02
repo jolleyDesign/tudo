@@ -91,6 +91,10 @@ fn nav_key(app: &mut App, key: KeyEvent) {
         KeyCode::Char('l') | KeyCode::Right if !detail => app.focus_tasks(),
         KeyCode::Char('j') | KeyCode::Down => app.move_selection(1),
         KeyCode::Char('k') | KeyCode::Up => app.move_selection(-1),
+        KeyCode::Char('J') => app.reorder_task(1),
+        KeyCode::Char('K') => app.reorder_task(-1),
+        KeyCode::Char('g') => app.send_task(true),
+        KeyCode::Char('G') => app.send_task(false),
         KeyCode::Char(' ') => app.toggle_selected(),
         KeyCode::Enter => app.activate(),
         KeyCode::Char('a') => app.start_add_task(),
@@ -171,6 +175,7 @@ fn return_mode(field: InputField, detail: bool) -> Mode {
 fn apply_input(app: &mut App, field: InputField, buffer: String) {
     match field {
         InputField::NewList => app.add_list(buffer),
+        InputField::RenameList => app.rename_current_list(buffer),
         InputField::NewTask => app.add_task(buffer),
         InputField::EditTask => app.edit_current_task_title(buffer),
         InputField::Tags => app.set_current_tags(&buffer),
