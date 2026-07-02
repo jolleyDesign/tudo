@@ -2,7 +2,7 @@
 
 A fast, local-first todo list for your terminal. Fully keyboard-driven (with mouse support), no cloud, no accounts - your tasks are plain JSON files on your own disk.
 
-![tudo demo](tudo-demo.gif)
+![tudo demo](v1.0.5-tudo-demo.gif)
 
 ## Features
 

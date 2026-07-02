@@ -2,6 +2,8 @@
 
 Thanks for your interest in tudo! It's a small project, so contributing is simple.
 
+**NOTE:** These instructions may fall behind the current version by a few days. I am a solo dev, and I'm doing my best :)
+
 ## Getting set up
 
 You'll need a [Rust toolchain](https://rustup.rs/) (1.95+). Then:
