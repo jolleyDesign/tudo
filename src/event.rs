@@ -89,6 +89,10 @@ fn nav_key(app: &mut App, key: KeyEvent) {
         KeyCode::Tab => app.toggle_focus(),
         KeyCode::Char('h') | KeyCode::Left if !detail => app.focus_lists(),
         KeyCode::Char('l') | KeyCode::Right if !detail => app.focus_tasks(),
+        // Shift+arrows reorder the task (like J/K). Must precede the plain
+        // Up/Down arms below, which don't inspect modifiers.
+        KeyCode::Down if key.modifiers.contains(KeyModifiers::SHIFT) => app.reorder_task(1),
+        KeyCode::Up if key.modifiers.contains(KeyModifiers::SHIFT) => app.reorder_task(-1),
         KeyCode::Char('j') | KeyCode::Down => app.move_selection(1),
         KeyCode::Char('k') | KeyCode::Up => app.move_selection(-1),
         KeyCode::Char('J') => app.reorder_task(1),
@@ -100,7 +104,8 @@ fn nav_key(app: &mut App, key: KeyEvent) {
         KeyCode::Char('a') => app.start_add_task(),
         KeyCode::Char('A') => app.start_add_list(),
         KeyCode::Char('e') => app.start_edit(),
-        KeyCode::Char('d') => app.start_delete(),
+        KeyCode::Char('d') => app.delete_or_archive(),
+        KeyCode::Char('X') => app.start_delete(),
         KeyCode::Char('p') => app.cycle_current_priority(),
         KeyCode::Char('D') => app.start_set_due(),
         KeyCode::Char('t') => app.start_set_tags(),

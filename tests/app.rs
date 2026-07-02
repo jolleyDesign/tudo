@@ -284,6 +284,143 @@ fn reorder_task_steps_past_hidden_tasks_under_filter() {
 }
 
 #[test]
+fn archive_is_created_lazily_and_pinned_last() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app_in(dir.path());
+    // No archive until something is archived.
+    app.add_list("Work".to_string());
+    app.add_list("Zebra".to_string());
+    assert!(!app.lists.iter().any(|l| l.is_archive()));
+
+    // Archiving a task creates the Archived list, pinned after user lists
+    // despite its name sorting early.
+    app.add_task("t".to_string());
+    app.delete_or_archive(); // `d` on a task archives it
+    let names: Vec<String> = app.lists.iter().map(|l| l.name.clone()).collect();
+    assert_eq!(names.last().unwrap(), "Archived");
+    assert_eq!(app.lists.iter().filter(|l| l.is_archive()).count(), 1);
+}
+
+#[test]
+fn archive_moves_task_and_persists() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app_in(dir.path());
+    app.add_list("Work".to_string());
+    app.add_task("do it".to_string());
+    app.add_task("later".to_string());
+    app.select_task_visible(0); // "do it"
+
+    app.delete_or_archive();
+
+    let work = app.lists.iter().find(|l| l.name == "Work").unwrap();
+    assert_eq!(work.tasks.len(), 1);
+    assert_eq!(work.tasks[0].title, "later");
+    let arch = app.lists.iter().find(|l| l.is_archive()).unwrap();
+    assert_eq!(arch.tasks.len(), 1);
+    assert_eq!(arch.tasks[0].title, "do it");
+
+    // Both lists round-trip through disk (the archive file too).
+    let reloaded = app_in(dir.path());
+    let work = reloaded.lists.iter().find(|l| l.name == "Work").unwrap();
+    let arch = reloaded.lists.iter().find(|l| l.is_archive()).unwrap();
+    assert_eq!(work.tasks.len(), 1);
+    assert_eq!(arch.tasks[0].title, "do it");
+    // Still pinned last after a reload.
+    assert!(reloaded.lists.last().unwrap().is_archive());
+}
+
+#[test]
+fn archiving_an_already_archived_task_is_a_noop_hint() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app_in(dir.path());
+    app.add_list("Work".to_string());
+    app.add_task("t".to_string());
+    app.delete_or_archive();
+
+    let ai = app.lists.iter().position(|l| l.is_archive()).unwrap();
+    app.select_list_index(ai);
+    app.focus_tasks();
+    app.select_task_visible(0);
+    app.delete_or_archive(); // no-op on an already-archived task
+
+    assert!(!app.status.is_empty());
+    let arch = app.lists.iter().find(|l| l.is_archive()).unwrap();
+    assert_eq!(arch.tasks.len(), 1);
+}
+
+#[test]
+fn unarchive_via_move_and_archive_hidden_from_targets() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app_in(dir.path());
+    app.add_list("Work".to_string());
+    app.add_task("t".to_string());
+    app.delete_or_archive();
+
+    // From a user list, the Archived list is not offered as a move target.
+    let wi = app.lists.iter().position(|l| l.name == "Work").unwrap();
+    app.select_list_index(wi);
+    app.focus_tasks();
+    app.add_task("keep".to_string());
+    app.start_move_task();
+    assert!(!matches!(app.mode, Mode::MovePicker(_)));
+    app.close_overlay();
+
+    // From the Archived list, moving out to Work unarchives the task.
+    let ai = app.lists.iter().position(|l| l.is_archive()).unwrap();
+    app.select_list_index(ai);
+    app.focus_tasks();
+    app.select_task_visible(0);
+    app.start_move_task();
+    assert!(matches!(app.mode, Mode::MovePicker(_)));
+    app.move_picker_confirm(); // only non-archive target is Work
+
+    let work = app.lists.iter().find(|l| l.name == "Work").unwrap();
+    let arch = app.lists.iter().find(|l| l.is_archive()).unwrap();
+    assert!(work.tasks.iter().any(|t| t.title == "t"));
+    assert_eq!(arch.tasks.len(), 0);
+}
+
+#[test]
+fn archived_list_is_protected_from_rename_and_delete() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app_in(dir.path());
+    app.add_list("Work".to_string());
+    app.add_task("t".to_string());
+    app.delete_or_archive();
+
+    let ai = app.lists.iter().position(|l| l.is_archive()).unwrap();
+    app.select_list_index(ai); // focuses the Lists pane
+
+    app.start_rename_list();
+    assert!(!matches!(app.mode, Mode::Input(_)));
+    assert!(!app.status.is_empty());
+
+    app.start_delete(); // `X` on the Archived list
+    assert!(!matches!(app.mode, Mode::Confirm(_)));
+    assert!(app.lists.iter().any(|l| l.is_archive()));
+}
+
+#[test]
+fn permanent_delete_removes_an_archived_task() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app_in(dir.path());
+    app.add_list("Work".to_string());
+    app.add_task("t".to_string());
+    app.delete_or_archive();
+
+    let ai = app.lists.iter().position(|l| l.is_archive()).unwrap();
+    app.select_list_index(ai);
+    app.focus_tasks();
+    app.select_task_visible(0);
+    app.start_delete(); // `X` → confirm permanent delete
+    assert!(matches!(app.mode, Mode::Confirm(_)));
+    app.delete_current_task(); // simulate the confirm's accept path
+
+    let arch = app.lists.iter().find(|l| l.is_archive()).unwrap();
+    assert_eq!(arch.tasks.len(), 0);
+}
+
+#[test]
 fn status_messages_expire_after_their_deadline() {
     use std::time::Duration;
 

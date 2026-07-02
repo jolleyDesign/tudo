@@ -336,17 +336,9 @@ impl App {
     /// Build the app. `data_dir = None` starts the first-run picker. The active
     /// theme defaults to Tokyo Night; call [`App::set_theme`] to change it.
     pub fn new(data_dir: Option<PathBuf>) -> anyhow::Result<Self> {
-        let mut list_state = ListState::default();
-        let mut task_state = ListState::default();
-        let subtask_state = ListState::default();
-
         let (data_dir, lists, mode) = match data_dir {
             Some(dir) => {
                 let lists = storage::load_lists(&dir)?;
-                if !lists.is_empty() {
-                    list_state.select(Some(0));
-                    task_state.select(Some(0));
-                }
                 (dir, lists, Mode::Normal)
             }
             None => (
@@ -359,21 +351,33 @@ impl App {
         let theme = ThemeKind::default();
         theme::set(theme.theme());
 
-        Ok(Self {
+        let mut app = Self {
             data_dir,
             lists,
             mode,
             focus: Focus::Lists,
-            list_state,
-            task_state,
-            subtask_state,
+            list_state: ListState::default(),
+            task_state: ListState::default(),
+            subtask_state: ListState::default(),
             filter: Filter::default(),
             theme,
             status: String::new(),
             status_expiry: None,
             should_quit: false,
             clickables: Clickables::default(),
-        })
+        };
+
+        // Pin any previously-created Archived list to the bottom, then select
+        // the first list. (First run has no data dir yet, so skip it.)
+        if !matches!(app.mode, Mode::FirstRun(_)) {
+            app.sort_lists();
+            if !app.lists.is_empty() {
+                app.list_state.select(Some(0));
+                app.task_state.select(Some(0));
+            }
+        }
+
+        Ok(app)
     }
 
     /// Set the active theme without persisting (used at startup).
@@ -464,6 +468,7 @@ impl App {
             Ok(l) => self.lists = l,
             Err(e) => self.set_status(format!("load error: {e}")),
         }
+        self.sort_lists();
         if self.lists.is_empty() {
             self.list_state.select(None);
             self.task_state.select(None);
@@ -741,7 +746,7 @@ impl App {
             return;
         }
         self.lists.push(list);
-        self.lists.sort_by_key(|a| a.name.to_lowercase());
+        self.sort_lists();
         // Select the newly added list (found by its unique slug after sorting).
         let pos = self.lists.iter().position(|l| l.slug == slug).unwrap_or(0);
         self.list_state.select(Some(pos));
@@ -765,7 +770,7 @@ impl App {
             None => return,
         };
         self.save_list_at(li);
-        self.lists.sort_by_key(|a| a.name.to_lowercase());
+        self.sort_lists();
         // Re-select the renamed list (its slug is stable across the rename).
         let pos = self.lists.iter().position(|l| l.slug == slug).unwrap_or(li);
         self.list_state.select(Some(pos));
@@ -873,6 +878,87 @@ impl App {
         self.focus = Focus::Lists;
     }
 
+    // --- archive -------------------------------------------------------------
+
+    /// Index of the Archived list, if it has been created yet.
+    fn archive_index(&self) -> Option<usize> {
+        self.lists.iter().position(|l| l.is_archive())
+    }
+
+    /// Sort user lists by name (case-insensitive) and pin the Archived list to
+    /// the bottom. A no-op ordering-wise when no archive exists.
+    fn sort_lists(&mut self) {
+        self.lists.sort_by(|a, b| match (a.is_archive(), b.is_archive()) {
+            (true, false) => std::cmp::Ordering::Greater,
+            (false, true) => std::cmp::Ordering::Less,
+            _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
+        });
+    }
+
+    /// Create the Archived list (on disk and in memory) if it doesn't exist yet.
+    /// Appends it, so existing list indices stay valid; it's created lazily on
+    /// the first archive rather than cluttering every new install.
+    fn ensure_archive(&mut self) {
+        if self.data_dir.as_os_str().is_empty() || self.archive_index().is_some() {
+            return;
+        }
+        let mut list = List::new(model::ARCHIVE_NAME);
+        list.slug = model::ARCHIVE_SLUG.to_string();
+        if let Err(e) = storage::save_list(&self.data_dir, &list) {
+            self.set_status(format!("save error: {e}"));
+            return;
+        }
+        self.lists.push(list);
+    }
+
+    /// `d` on a task: move the selected task into the Archived list (creating it
+    /// on first use) and persist both. Reversible via `m`, so no confirm. No-op
+    /// when there's no current task or it already lives in the archive.
+    pub fn archive_current_task(&mut self) {
+        let src = self.selected_list();
+        if self.lists.get(src).is_some_and(|l| l.is_archive()) {
+            self.set_status("already archived — X deletes, m moves it out".to_string());
+            return;
+        }
+        let Some(ti) = self.current_task_index() else {
+            return;
+        };
+        self.ensure_archive();
+        let Some(dest) = self.archive_index() else {
+            return;
+        };
+        let task = self.lists[src].tasks.remove(ti);
+        let title = task.title.clone();
+        self.lists[dest].tasks.push(task);
+        self.save_list_at(src);
+        self.save_list_at(dest);
+        // Clamp the source selection now that a task is gone.
+        let visible = self.visible_task_indices().len();
+        if visible == 0 {
+            self.task_state.select(None);
+        } else {
+            let cur = self.selected_visible_task().min(visible - 1);
+            self.task_state.select(Some(cur));
+        }
+        // The task left this list, so its detail view no longer applies.
+        if self.in_detail() {
+            self.mode = Mode::Normal;
+        }
+        self.set_status(format!("archived \"{title}\""));
+    }
+
+    /// The `d` key: archive the selected task, but fall back to permanent delete
+    /// (with confirm) for a list or subtask, which have no archive.
+    pub fn delete_or_archive(&mut self) {
+        let deleting_subtask = self.in_detail() && self.selected_subtask().is_some();
+        let deleting_list = !self.in_detail() && self.focus == Focus::Lists;
+        if deleting_subtask || deleting_list {
+            self.start_delete();
+        } else {
+            self.archive_current_task();
+        }
+    }
+
     // --- reorder tasks within a list -----------------------------------------
 
     /// Swap the selected task with the visible task `delta` slots away
@@ -935,7 +1021,11 @@ impl App {
             return;
         }
         let src = self.selected_list();
-        let targets: Vec<usize> = (0..self.lists.len()).filter(|&i| i != src).collect();
+        // Archiving has its own key (`d`), so keep the Archived list out of the
+        // move picker. Moving *out* of it (to a real list) is how you unarchive.
+        let targets: Vec<usize> = (0..self.lists.len())
+            .filter(|&i| i != src && !self.lists[i].is_archive())
+            .collect();
         if targets.is_empty() {
             self.set_status("no other list to move to".to_string());
             return;
@@ -1184,7 +1274,8 @@ impl App {
     }
 
     pub fn start_add_task(&mut self) {
-        if self.lists.is_empty() {
+        // The Archived list doesn't count: you need a real list to add tasks to.
+        if !self.lists.iter().any(|l| !l.is_archive()) {
             self.set_status("create a list first (A)".to_string());
             return;
         }
@@ -1202,6 +1293,10 @@ impl App {
         let Some(list) = self.current_list() else {
             return;
         };
+        if list.is_archive() {
+            self.set_status("the Archived list can't be renamed".to_string());
+            return;
+        }
         let name = list.name.clone();
         self.mode = Mode::Input(InputState::new(
             InputField::RenameList,
@@ -1338,6 +1433,10 @@ impl App {
                 let Some(list) = self.current_list() else {
                     return;
                 };
+                if list.is_archive() {
+                    self.set_status("the Archived list can't be deleted".to_string());
+                    return;
+                }
                 let name = list.name.clone();
                 let n = list.tasks.len();
                 self.mode = Mode::Confirm(ConfirmState {
@@ -1352,7 +1451,7 @@ impl App {
                 };
                 let title = task.title.clone();
                 self.mode = Mode::Confirm(ConfirmState {
-                    prompt: format!("Delete task \"{title}\"?"),
+                    prompt: format!("Permanently delete \"{title}\"?"),
                     action: ConfirmAction::DeleteTask,
                     return_detail: self.in_detail(),
                 });
@@ -1398,6 +1497,7 @@ impl App {
             let _ = storage::save_list(&self.data_dir, &list);
             self.lists.push(list);
         }
+        self.sort_lists();
         self.list_state.select(Some(0));
         self.task_state.select(Some(0));
         self.focus = Focus::Lists;

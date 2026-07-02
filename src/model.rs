@@ -129,6 +129,14 @@ impl Task {
     }
 }
 
+/// Reserved slug (and file stem) for the special "Archived" list. Underscores
+/// can never appear in a user slug (see `storage::slugify`), so this can't
+/// collide with a list the user creates.
+pub const ARCHIVE_SLUG: &str = "__archived__";
+
+/// Display name given to the Archived list when it is first created.
+pub const ARCHIVE_NAME: &str = "Archived";
+
 /// A named list/project. `slug` is the file stem on disk and is not serialized
 /// (it comes from the filename when loading).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -152,6 +160,11 @@ impl List {
     /// Count of not-done tasks.
     pub fn open_count(&self) -> usize {
         self.tasks.iter().filter(|t| !t.done).count()
+    }
+
+    /// True for the reserved Archived list (identified by its on-disk slug).
+    pub fn is_archive(&self) -> bool {
+        self.slug == ARCHIVE_SLUG
     }
 }
 

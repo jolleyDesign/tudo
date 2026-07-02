@@ -160,8 +160,14 @@ fn render_sidebar(f: &mut Frame, area: Rect, app: &mut App) {
         .map(|l| {
             let open = l.open_count();
             let total = l.tasks.len();
+            // The Archived list sits at the bottom, rendered dimmer than the rest.
+            let name_fg = if l.is_archive() {
+                theme::muted()
+            } else {
+                theme::fg()
+            };
             ListItem::new(Line::from(vec![
-                Span::styled(l.name.clone(), Style::default().fg(theme::fg())),
+                Span::styled(l.name.clone(), Style::default().fg(name_fg)),
                 Span::styled(
                     format!("  {open}/{total}"),
                     Style::default().fg(theme::muted()),
@@ -546,62 +552,91 @@ fn render_confirm(f: &mut Frame, app: &App) {
 }
 
 fn render_help(f: &mut Frame, _app: &App) {
-    // Fixed width sized to the longest row so descriptions never clip; capped to
-    // the terminal on narrow screens.
-    let area = centered_rect_cols(f.area(), 64, 25);
+    let area = centered_rect_cols(f.area(), 68, 23);
     overlay_clear(f, area);
     let block = overlay_block("Keybindings", theme::accent());
-    let rows = [
-        ("Tab / h l / arrows", "switch focus between panes"),
-        ("j k / up down", "move selection"),
-        ("J / K", "move task down / up in the list"),
-        ("g / G", "send task to top / bottom"),
-        ("space", "toggle task (or subtask) done"),
-        ("Enter", "open task detail / drill into list"),
-        ("a / A", "add task / add list"),
-        ("e", "edit task title / rename list"),
-        ("d", "delete selected (with confirm)"),
-        ("p", "cycle priority"),
-        ("D", "set / clear due date"),
-        ("t", "edit tags"),
-        ("n", "edit notes"),
-        ("s", "add subtask"),
-        ("m", "move task to another list"),
-        ("c", "copy task (JSON / title / notes)"),
-        ("/", "search (title, tags, notes)"),
-        ("f", "cycle status filter (all/active/done)"),
-        ("T", "open the theme picker"),
-        ("S", "settings (paths, data location)"),
-        ("Esc", "back / clear filter"),
-        ("?", "toggle this help"),
-        ("q / Ctrl-C", "quit"),
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+
+    // Grouped bindings in two columns above a one-line footer, so the whole
+    // cheat-sheet stays short enough to fit a typical terminal.
+    let [body, footer] =
+        Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(inner);
+    let [left, right] =
+        Layout::horizontal([Constraint::Percentage(56), Constraint::Percentage(44)]).areas(body);
+
+    let header = |t: &str| {
+        Line::from(Span::styled(
+            t.to_string(),
+            Style::default()
+                .fg(theme::accent())
+                .add_modifier(Modifier::BOLD),
+        ))
+    };
+    // A `key … description` row; the key is padded to `kw` so descriptions align.
+    let row = |keys: &str, desc: &str, kw: usize| {
+        Line::from(vec![
+            Span::styled(
+                format!("{keys:<kw$}"),
+                Style::default().fg(theme::fg()).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(desc.to_string(), Style::default().fg(theme::muted())),
+        ])
+    };
+
+    const LW: usize = 12;
+    let left_lines = vec![
+        header("Navigate"),
+        row("Tab h/l \u{2190}\u{2192}", "switch pane", LW),
+        row("j k \u{2191}\u{2193}", "move cursor", LW),
+        row("Enter", "open / drill in", LW),
+        row("Esc", "back / clear", LW),
+        Line::raw(""),
+        header("Organize"),
+        row("space", "toggle done", LW),
+        row("J K \u{21e7}\u{2191}\u{2193}", "move up / down", LW),
+        row("g G", "to top / bottom", LW),
+        row("m", "move / unarchive", LW),
+        Line::raw(""),
+        header("Find"),
+        row("/", "search", LW),
+        row("f", "cycle filter", LW),
+        row("c", "copy task", LW),
     ];
-    let mut lines: Vec<Line> = Vec::new();
-    for (k, v) in rows {
-        // Dotted leader bridging the gap so the eye can track each key across
-        // to its description. Descriptions stay aligned at a fixed column; the
-        // leader (always flanked by a space) grows to fill shorter keys.
-        let dots = 18usize.saturating_sub(k.chars().count());
-        lines.push(Line::from(vec![
-            Span::styled(
-                format!("  {k}"),
-                Style::default()
-                    .fg(theme::accent())
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(
-                format!(" {} ", ".".repeat(dots)),
-                Style::default().fg(theme::muted()),
-            ),
-            Span::styled(v.to_string(), Style::default().fg(theme::fg())),
-        ]));
-    }
-    lines.push(Line::raw(""));
-    lines.push(Line::from(Span::styled(
-        "  press any key to close",
-        Style::default().fg(theme::muted()),
-    )));
-    f.render_widget(Paragraph::new(Text::from(lines)).block(block), area);
+
+    const RW: usize = 5;
+    let right_lines = vec![
+        header("Create & edit"),
+        row("a A", "add task / list", RW),
+        row("e", "edit / rename", RW),
+        row("s", "add subtask", RW),
+        Line::raw(""),
+        header("Details"),
+        row("p", "priority", RW),
+        row("D", "due date", RW),
+        row("t", "tags", RW),
+        row("n", "notes", RW),
+        Line::raw(""),
+        header("Remove"),
+        row("d", "archive task", RW),
+        row("X", "delete (confirm)", RW),
+        Line::raw(""),
+        header("App"),
+        row("T", "theme", RW),
+        row("S", "settings", RW),
+        row("? q", "help / quit", RW),
+    ];
+
+    f.render_widget(Paragraph::new(Text::from(left_lines)), left);
+    f.render_widget(Paragraph::new(Text::from(right_lines)), right);
+    f.render_widget(
+        Paragraph::new(Line::from(Span::styled(
+            "press any key to close",
+            Style::default().fg(theme::muted()),
+        )))
+        .alignment(Alignment::Center),
+        footer,
+    );
 }
 
 fn render_theme_picker(f: &mut Frame, app: &App) {

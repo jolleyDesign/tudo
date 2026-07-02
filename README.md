@@ -11,6 +11,9 @@ A fast, local-first todo list for your terminal. Fully keyboard-driven (with mou
   checkable subtasks.
 - **Reorder freely**: nudge a task up/down or send it straight to the top or
   bottom of its list.
+- **Archive, don't delete**: press `d` to tuck a task into the dimmed
+  **Archived** list (pinned at the bottom of the sidebar) instead of losing it;
+  `X` deletes for good, and `m` moves a task back out to unarchive it.
 - **Keyboard first, mouse friendly**: vim keys and arrow keys; click rows,
   click a checkbox to toggle, scroll to move.
 - **Search & filter**: substring search across titles/tags/notes and a
@@ -35,14 +38,10 @@ macOS and Linux:
 curl -fsSL https://raw.githubusercontent.com/jolleydesign/tudo/main/install.sh | sh
 ```
 
-This grabs the right binary for your platform from the latest
-[release](https://github.com/jolleydesign/tudo/releases) and installs it to
-`~/.local/bin`. Set `TUDO_INSTALL_DIR` to install somewhere else, or
-`TUDO_VERSION` (e.g. `v0.1.0`) to pin a specific version.
+This grabs the right binary for your platform from the latest [release](https://github.com/jolleydesign/tudo/releases) and installs it to
+`~/.local/bin`. Set `TUDO_INSTALL_DIR` to install somewhere else, or `TUDO_VERSION` (e.g. `v0.1.0`) to pin a specific version.
 
-**Updating:** re-run the install command above to upgrade to the latest
-release - it overwrites the existing binary in place. Check what you're running
-with `tudo --version`.
+**Updating:** re-run the install command above to upgrade to the latest release - it overwrites the existing binary in place. Check what you're running with `tudo --version`.
 
 ### With Homebrew
 
@@ -52,13 +51,11 @@ macOS and Linux (via [Homebrew](https://brew.sh)):
 brew install jolleydesign/tudo/tudo
 ```
 
-This taps `jolleydesign/homebrew-tudo` and installs the prebuilt binary. Upgrade
-later with `brew upgrade tudo`.
+This taps `jolleydesign/homebrew-tudo` and installs the prebuilt binary. Upgrade later with `brew upgrade tudo`.
 
 ### With Cargo
 
-From [crates.io](https://crates.io/crates/tudo-tui) - the crate is published as
-`tudo-tui` (the name `tudo` was taken), but the installed command is still `tudo`:
+From [crates.io](https://crates.io/crates/tudo-tui) - the crate is published as `tudo-tui` (the name `tudo` was taken), but the installed command is still `tudo`:
 
 ```sh
 cargo install tudo-tui
@@ -88,64 +85,76 @@ created so you can begin immediately.
 
 ## Keybindings
 
+Press `?` in the app for the same list grouped into an overlay.
+
+**Navigate**
+
 | Key | Action |
 |-----|--------|
 | `Tab`, `h`/`l`, `←`/`→` | switch focus between the Lists and Tasks panes |
 | `j`/`k`, `↑`/`↓` | move the selection |
-| `J`/`K` | move the selected task down / up within the list |
-| `g`/`G` | send the selected task to the top / bottom of the list |
-| `Space` | toggle the selected task (or subtask) done |
 | `Enter` | open a task's detail view / drill into a list |
+| `Esc` | close a dialog / leave detail / clear the filter |
+
+**Organize**
+
+| Key | Action |
+|-----|--------|
+| `Space` | toggle the selected task (or subtask) done |
+| `J`/`K`, `Shift`+`↓`/`↑` | move the selected task down / up within the list |
+| `g`/`G` | send the selected task to the top / bottom of the list |
+| `m` | move the selected task to another list (also how you unarchive) |
+
+**Create & edit**
+
+| Key | Action |
+|-----|--------|
 | `a` / `A` | add a task / add a list |
 | `e` | edit the selected task's title, or rename the list when the Lists pane is focused |
-| `d` | delete the selected item (asks to confirm) |
+| `s` | add a subtask |
 | `p` | cycle priority (none → low → med → high) |
 | `D` | set or clear the due date |
 | `t` | edit tags |
 | `n` | edit notes (multi-line: `Enter` for a newline, `Ctrl+S` to save) |
-| `s` | add a subtask |
-| `m` | move the selected task to another list |
-| `c` | copy the selected task (menu: full JSON / title / description) |
+
+**Remove**
+
+| Key | Action |
+|-----|--------|
+| `d` | archive the selected task; delete a list or subtask (asks to confirm) |
+| `X` | permanently delete the selected task/list/subtask (asks to confirm) |
+
+**Find & app**
+
+| Key | Action |
+|-----|--------|
 | `/` | search (titles, tags, notes) |
 | `f` | cycle the status filter (all / active / done) |
+| `c` | copy the selected task (menu: full JSON / title / description) |
 | `T` | open the theme picker |
 | `S` | open settings (paths, data location) |
-| `Esc` | close a dialog / leave detail / clear the filter |
 | `?` | show the help overlay |
 | `q`, `Ctrl+C` | quit |
 
 **Due-date input** accepts `YYYY-MM-DD`, `today`, `tomorrow`, or `+N` (N days
 from today). An empty value clears the date.
 
-**Mouse:** click a list or task to select it, click a task's checkbox to toggle
-it done, and use the scroll wheel to move within the focused pane.
+**Mouse:** click a list or task to select it, click a task's checkbox to toggle it done, and use the scroll wheel to move within the focused pane.
 
 ## Themes
 
-Press `T` to open the **theme picker**: browse with `↑/↓` to preview each theme
-live across the whole UI, `Enter` to apply, `Esc` to revert. Eleven palettes are
-built in - **Tokyo Night**, **Catppuccin Mocha**, **Dracula**,
+Press `T` to open the **theme picker**: browse with `↑/↓` to preview each theme live across the whole UI, `Enter` to apply, `Esc` to revert. Eleven palettes are built in - **Tokyo Night**, **Catppuccin Mocha**, **Dracula**,
 **Nord**, **Gruvbox Dark**, **Solarized Dark**, **One Dark**, **Rosé Pine**,
 **Gotham**, **Black & White**, and **Terminal** (default). Your choice is
 remembered in the config pointer.
 
-The coloured themes are truecolor, so they look the same regardless of your
-terminal's own theme; **Terminal** does the opposite - it forces no background
-and uses the 16 ANSI colours, so the app adopts your terminal's scheme. Set
-`TUDO_THEME` (e.g. `TUDO_THEME=dracula` or `TUDO_THEME=none`) to override the
-theme for a single run.
+The coloured themes are truecolor, so they look the same regardless of your terminal's own theme; **Terminal** does the opposite - it forces no background and uses the 16 ANSI colours, so the app adopts your terminal's scheme. Set `TUDO_THEME` (e.g. `TUDO_THEME=dracula` or `TUDO_THEME=none`) to override the theme for a single run.
 
 ## Settings & configuration
 
-Press `S` to open the settings panel, which shows your **data directory**, the
-**config file** path, the storage format, the active theme, your list/task
-counts, and any environment overrides currently in effect.
+Press `S` to open the settings panel, which shows your **data directory**, the **config file** path, the storage format, the active theme, your list/task counts, and any environment overrides currently in effect.
 
-Configuration is a small **JSON** file (not TOML) - `~/.config/tudo/config.json`
-by default (override with `$TUDO_CONFIG`). It holds just the `data_dir` and
-`theme`; everything else (your actual lists) lives as separate JSON files in the
-data directory. To move your data, press `S` then `d`, type a new path (`~` is
-allowed), and `Enter` - tudo moves your list files there and repoints the config.
+Configuration is a small **JSON** file (not TOML) - `~/.config/tudo/config.json` by default (override with `$TUDO_CONFIG`). It holds just the `data_dir` and `theme`; everything else (your actual lists) lives as separate JSON files in the data directory. To move your data, press `S` then `d`, type a new path (`~` is allowed), and `Enter` - tudo moves your list files there and repoints the config.
 
 ## Storage format
 
@@ -192,7 +201,4 @@ cargo clippy --all-targets
 cargo run
 ```
 
-Source layout: `model` (types), `storage` (JSON I/O), `config` (data-dir
-resolution), `app` (state + actions), `event` (key/mouse mapping), `ui`
-(rendering). The action logic and rendering are terminal-free, so they're tested
-directly with `tempfile` and ratatui's `TestBackend`.
+Source layout: `model` (types), `storage` (JSON I/O), `config` (data-dir resolution), `app` (state + actions), `event` (key/mouse mapping), `ui` (rendering). The action logic and rendering are terminal-free, so they're tested directly with `tempfile` and ratatui's `TestBackend`.

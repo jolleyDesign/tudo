@@ -120,5 +120,8 @@ fn help_overlay_lists_keybindings() {
 
     let text = render_to_string(&mut app, 100, 30);
     assert!(text.contains("Keybindings"), "help title missing");
-    assert!(text.contains("cycle priority"), "help body missing");
+    // Grouped, two-column layout: check a section header and a binding.
+    assert!(text.contains("Navigate"), "help section header missing: {text}");
+    assert!(text.contains("priority"), "help body missing");
+    assert!(text.contains("press any key to close"), "help footer missing");
 }
