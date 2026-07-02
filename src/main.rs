@@ -8,9 +8,7 @@ use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use ratatui::crossterm::event::{DisableMouseCapture, EnableMouseCapture, Event, poll, read};
 use ratatui::crossterm::execute;
-use ratatui::crossterm::terminal::{
-    EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
-};
+use ratatui::crossterm::terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode};
 
 use tudo::app::App;
 use tudo::config::Startup;
@@ -22,10 +20,7 @@ type Term = Terminal<CrosstermBackend<Stdout>>;
 
 fn main() -> Result<()> {
     // Handle `--version` / `-V` before touching the terminal.
-    if std::env::args()
-        .skip(1)
-        .any(|a| a == "--version" || a == "-V")
-    {
+    if std::env::args().skip(1).any(|a| a == "--version" || a == "-V") {
         println!("{} {}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
         return Ok(());
     }
@@ -39,10 +34,7 @@ fn main() -> Result<()> {
         Startup::FirstRun { theme, keybindings } => (None, theme, keybindings),
     };
     // $TUDO_THEME overrides the saved theme for this run.
-    if let Some(kind) = std::env::var("TUDO_THEME")
-        .ok()
-        .and_then(|s| ThemeKind::from_key(&s))
-    {
+    if let Some(kind) = std::env::var("TUDO_THEME").ok().and_then(|s| ThemeKind::from_key(&s)) {
         theme = kind;
     }
     let (keymap, keymap_warnings) = Keymap::from_overrides(keybindings);
@@ -85,7 +77,7 @@ fn run(terminal: &mut Term, app: &mut App) -> Result<()> {
             match read()? {
                 Event::Key(key) => event::handle_key(app, key),
                 Event::Mouse(m) => event::handle_mouse(app, m),
-                _ => {}
+                _ => {},
             }
         }
         app.expire_status(Instant::now());
@@ -103,11 +95,7 @@ fn setup_terminal() -> Result<Term> {
 
 fn restore_terminal(terminal: &mut Term) -> Result<()> {
     disable_raw_mode()?;
-    execute!(
-        terminal.backend_mut(),
-        LeaveAlternateScreen,
-        DisableMouseCapture
-    )?;
+    execute!(terminal.backend_mut(), LeaveAlternateScreen, DisableMouseCapture)?;
     terminal.show_cursor()?;
     Ok(())
 }

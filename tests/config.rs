@@ -32,27 +32,15 @@ fn keybindings_load_from_disk_and_materialize_the_full_set() {
     unsafe { std::env::set_var("TUDO_CONFIG", &cfg_path) };
 
     let loaded = config::load_config().unwrap().expect("config present");
-    assert_eq!(
-        loaded.keybindings.get("quit").unwrap(),
-        &vec!["Q".to_string()]
-    );
+    assert_eq!(loaded.keybindings.get("quit").unwrap(), &vec!["Q".to_string()]);
 
     // The loaded overrides build a working keymap: 'Q' quits, plain 'q' doesn't.
     let (km, warnings) = Keymap::from_overrides(loaded.keybindings);
     assert!(warnings.is_empty(), "warnings: {warnings:?}");
-    assert_eq!(
-        km.action_for(KeyEvent::from(KeyCode::Char('Q'))),
-        Some(Action::Quit)
-    );
+    assert_eq!(km.action_for(KeyEvent::from(KeyCode::Char('Q'))), Some(Action::Quit));
     assert_eq!(km.action_for(KeyEvent::from(KeyCode::Char('q'))), None);
-    assert_eq!(
-        km.action_for(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL)),
-        Some(Action::Search)
-    );
-    assert!(
-        !km.covers_all_actions(),
-        "partial config isn't complete yet"
-    );
+    assert_eq!(km.action_for(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL)), Some(Action::Search));
+    assert!(!km.covers_all_actions(), "partial config isn't complete yet");
 
     // Startup path: install the keymap + theme, then materialize into the file.
     let mut app = App::new(Some(data_dir)).unwrap();
@@ -66,14 +54,8 @@ fn keybindings_load_from_disk_and_materialize_the_full_set() {
     unsafe { std::env::remove_var("TUDO_CONFIG") };
 
     assert_eq!(refreshed.theme, tudo::theme::ThemeKind::Dracula);
-    assert_eq!(
-        refreshed.keybindings.get("quit").unwrap(),
-        &vec!["Q".to_string()]
-    );
-    assert_eq!(
-        refreshed.keybindings.get("move-down").unwrap(),
-        &vec!["j".to_string(), "down".to_string()]
-    );
+    assert_eq!(refreshed.keybindings.get("quit").unwrap(), &vec!["Q".to_string()]);
+    assert_eq!(refreshed.keybindings.get("move-down").unwrap(), &vec!["j".to_string(), "down".to_string()]);
     for action in Action::ALL {
         assert!(
             refreshed.keybindings.contains_key(action.config_name()),

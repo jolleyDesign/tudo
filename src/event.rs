@@ -38,7 +38,7 @@ fn settings_key(app: &mut App, key: KeyEvent) {
         KeyCode::Char('d') => app.start_change_data_dir(),
         KeyCode::Char('t') | KeyCode::Char('T') => app.open_theme_picker(),
         KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('S') => app.close_overlay(),
-        _ => {}
+        _ => {},
     }
 }
 
@@ -48,7 +48,7 @@ fn theme_picker_key(app: &mut App, key: KeyEvent) {
         KeyCode::Char('k') | KeyCode::Up => app.theme_picker_preview(-1),
         KeyCode::Enter => app.theme_picker_confirm(),
         KeyCode::Esc | KeyCode::Char('q') => app.theme_picker_cancel(),
-        _ => {}
+        _ => {},
     }
 }
 
@@ -58,7 +58,7 @@ fn move_picker_key(app: &mut App, key: KeyEvent) {
         KeyCode::Char('k') | KeyCode::Up => app.move_picker_move(-1),
         KeyCode::Enter => app.move_picker_confirm(),
         KeyCode::Esc | KeyCode::Char('q') => app.move_picker_cancel(),
-        _ => {}
+        _ => {},
     }
 }
 
@@ -71,7 +71,7 @@ fn copy_menu_key(app: &mut App, key: KeyEvent) {
         KeyCode::Char('3') => app.copy_selected(CopyWhat::Notes),
         KeyCode::Enter => app.copy_menu_confirm(),
         KeyCode::Esc | KeyCode::Char('q') => app.copy_menu_cancel(),
-        _ => {}
+        _ => {},
     }
 }
 
@@ -93,12 +93,12 @@ fn dispatch(app: &mut App, action: Action) {
             } else if app.filter.is_active() {
                 app.clear_filter();
             }
-        }
+        },
         Action::ToggleFocus => app.toggle_focus(),
         // Pane focus is meaningless inside a task's detail view.
         Action::FocusLists if !detail => app.focus_lists(),
         Action::FocusTasks if !detail => app.focus_tasks(),
-        Action::FocusLists | Action::FocusTasks => {}
+        Action::FocusLists | Action::FocusTasks => {},
         Action::MoveDown => app.move_selection(1),
         Action::MoveUp => app.move_selection(-1),
         Action::ReorderDown => app.reorder_task(1),
@@ -149,17 +149,17 @@ fn input_key(app: &mut App, key: KeyEvent) {
             KeyCode::Right => input.right(),
             KeyCode::Home => input.home(),
             KeyCode::End => input.end(),
-            _ => {}
+            _ => {},
         }
     }
 
     match step {
-        Step::None => {}
+        Step::None => {},
         Step::Cancel => {
             if let Mode::Input(input) = &app.mode {
                 app.mode = return_mode(input.field, input.return_detail);
             }
-        }
+        },
         Step::Commit => {
             if let Mode::Input(input) = &app.mode {
                 let field = input.field;
@@ -167,7 +167,7 @@ fn input_key(app: &mut App, key: KeyEvent) {
                 app.mode = return_mode(field, input.return_detail);
                 apply_input(app, field, buffer);
             }
-        }
+        },
     }
 }
 
@@ -200,23 +200,14 @@ fn apply_input(app: &mut App, field: InputField, buffer: String) {
 
 fn confirm_key(app: &mut App, key: KeyEvent) {
     let (accept, action, return_detail) = match &app.mode {
-        Mode::Confirm(c) => (
-            matches!(
-                key.code,
-                KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter
-            ),
-            c.action,
-            c.return_detail,
-        ),
+        Mode::Confirm(c) => {
+            (matches!(key.code, KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter), c.action, c.return_detail)
+        },
         _ => return,
     };
 
     // Any non-accept key cancels.
-    app.mode = if return_detail {
-        Mode::Detail
-    } else {
-        Mode::Normal
-    };
+    app.mode = if return_detail { Mode::Detail } else { Mode::Normal };
 
     if !accept {
         return;
@@ -226,7 +217,7 @@ fn confirm_key(app: &mut App, key: KeyEvent) {
             app.delete_current_task();
             // A deleted task can't have a detail view.
             app.mode = Mode::Normal;
-        }
+        },
         ConfirmAction::DeleteList => app.delete_current_list(),
         ConfirmAction::DeleteSubtask => app.delete_current_subtask(),
     }
@@ -244,8 +235,8 @@ fn first_run_key(app: &mut App, key: KeyEvent) {
                 KeyCode::Char(c) => fr.custom.push(c),
                 KeyCode::Backspace => {
                     fr.custom.pop();
-                }
-                _ => {}
+                },
+                _ => {},
             }
         }
         if let Some(path) = commit
@@ -271,8 +262,8 @@ fn first_run_key(app: &mut App, key: KeyEvent) {
                 } else {
                     start_custom = true;
                 }
-            }
-            _ => {}
+            },
+            _ => {},
         }
     }
     if let Some(path) = chosen {
@@ -307,10 +298,10 @@ pub fn handle_mouse(app: &mut App, m: MouseEvent) {
                     app.toggle_current_done();
                 }
             }
-        }
+        },
         MouseEventKind::ScrollDown => app.move_selection(1),
         MouseEventKind::ScrollUp => app.move_selection(-1),
-        _ => {}
+        _ => {},
     }
 }
 

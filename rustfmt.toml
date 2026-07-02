@@ -1,0 +1,11 @@
+edition = "2024"
+style_edition = "2024"
+
+chain_width = 90
+max_width = 120
+use_small_heuristics = "Max"
+
+struct_lit_width = 18
+struct_variant_width = 35
+
+match_block_trailing_comma = true

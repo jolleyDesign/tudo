@@ -29,11 +29,7 @@ fn main() {
     }
 
     let tasks: usize = lists.iter().map(|l| l.tasks.len()).sum();
-    println!(
-        "Seeded {} lists ({tasks} tasks) into {}",
-        lists.len(),
-        dir.display()
-    );
+    println!("Seeded {} lists ({tasks} tasks) into {}", lists.len(), dir.display());
     println!("Record with:  TUDO_DIR={} cargo run", dir.display());
 }
 
@@ -46,56 +42,25 @@ fn build_lists(today: NaiveDate) -> Vec<List> {
             "Work",
             "work",
             vec![
-                task(
-                    "Ship v1.0 release",
-                    Some(Priority::High),
-                    d(2),
-                    &["release", "rust"],
-                )
-                .note("Cut the 1.0 tag once CI is green and the changelog is final.")
-                .subs(&[
-                    ("Finalise the changelog", true),
-                    ("Tag and build binaries", false),
-                    ("Announce on the forum", false),
-                ]),
-                task(
-                    "Fix mouse-scroll jitter on resize",
-                    Some(Priority::High),
-                    ago(1),
-                    &["bug"],
-                )
-                .note("Repro: resize the window while scrolled to the bottom of a long list."),
-                task(
-                    "Write integration tests for storage",
-                    Some(Priority::Medium),
-                    None,
-                    &["tests"],
-                )
-                .subs(&[
+                task("Ship v1.0 release", Some(Priority::High), d(2), &["release", "rust"])
+                    .note("Cut the 1.0 tag once CI is green and the changelog is final.")
+                    .subs(&[
+                        ("Finalise the changelog", true),
+                        ("Tag and build binaries", false),
+                        ("Announce on the forum", false),
+                    ]),
+                task("Fix mouse-scroll jitter on resize", Some(Priority::High), ago(1), &["bug"])
+                    .note("Repro: resize the window while scrolled to the bottom of a long list."),
+                task("Write integration tests for storage", Some(Priority::Medium), None, &["tests"]).subs(&[
                     ("JSON round-trip", true),
                     ("Atomic save", true),
                     ("Config resolution", false),
                 ]),
-                task(
-                    "Review PR #42 — theme picker",
-                    Some(Priority::Medium),
-                    d(0),
-                    &["review"],
-                ),
-                task(
-                    "Refactor event handling",
-                    Some(Priority::Low),
-                    None,
-                    &["tech-debt"],
-                )
-                .note("Split nav_key into per-mode handlers; it's getting long."),
+                task("Review PR #42 — theme picker", Some(Priority::Medium), d(0), &["review"]),
+                task("Refactor event handling", Some(Priority::Low), None, &["tech-debt"])
+                    .note("Split nav_key into per-mode handlers; it's getting long."),
                 done(task("Update the README screenshots", None, None, &["docs"])),
-                done(task(
-                    "Reply to the user feedback thread",
-                    None,
-                    ago(2),
-                    &["community"],
-                )),
+                done(task("Reply to the user feedback thread", None, ago(2), &["community"])),
             ],
         ),
         list(
@@ -104,26 +69,10 @@ fn build_lists(today: NaiveDate) -> Vec<List> {
             vec![
                 task("Renew passport", Some(Priority::High), d(10), &["admin"])
                     .note("Bring the old passport and two photos. Office opens at 9."),
-                task(
-                    "Dentist appointment",
-                    Some(Priority::Medium),
-                    ago(3),
-                    &["health"],
-                ),
+                task("Dentist appointment", Some(Priority::Medium), ago(3), &["health"]),
                 task("Call mum", None, d(0), &["family"]),
-                done(task(
-                    "Pay the electricity bill",
-                    Some(Priority::High),
-                    ago(4),
-                    &["bills"],
-                )),
-                task(
-                    "Plan the weekend hike",
-                    Some(Priority::Low),
-                    d(4),
-                    &["outdoors"],
-                )
-                .subs(&[
+                done(task("Pay the electricity bill", Some(Priority::High), ago(4), &["bills"])),
+                task("Plan the weekend hike", Some(Priority::Low), d(4), &["outdoors"]).subs(&[
                     ("Check the weather", false),
                     ("Pack snacks", false),
                     ("Charge the power bank", false),
@@ -147,43 +96,18 @@ fn build_lists(today: NaiveDate) -> Vec<List> {
             "Trip to Tokyo",
             "trip-to-tokyo",
             vec![
-                done(task(
-                    "Book flights",
-                    Some(Priority::High),
-                    ago(5),
-                    &["booking"],
-                )),
-                task(
-                    "Reserve a ryokan in Kyoto",
-                    Some(Priority::High),
-                    d(4),
-                    &["booking"],
-                )
-                .subs(&[("Compare options", true), ("Book two nights", false)]),
-                task(
-                    "Get the JR Pass",
-                    Some(Priority::Medium),
-                    d(6),
-                    &["transit"],
-                ),
-                task(
-                    "teamLab reservation",
-                    Some(Priority::Medium),
-                    d(0),
-                    &["activity"],
-                )
-                .note("Tickets drop at 12:00 JST — set an alarm."),
+                done(task("Book flights", Some(Priority::High), ago(5), &["booking"])),
+                task("Reserve a ryokan in Kyoto", Some(Priority::High), d(4), &["booking"])
+                    .subs(&[("Compare options", true), ("Book two nights", false)]),
+                task("Get the JR Pass", Some(Priority::Medium), d(6), &["transit"]),
+                task("teamLab reservation", Some(Priority::Medium), d(0), &["activity"])
+                    .note("Tickets drop at 12:00 JST — set an alarm."),
                 task("Pack", Some(Priority::Low), d(12), &[]).subs(&[
                     ("Passport", false),
                     ("Power adapters", false),
                     ("Camera + charger", false),
                 ]),
-                task(
-                    "Learn a few basic phrases",
-                    Some(Priority::Low),
-                    None,
-                    &["language"],
-                ),
+                task("Learn a few basic phrases", Some(Priority::Low), None, &["language"]),
             ],
         ),
         list(
@@ -192,19 +116,9 @@ fn build_lists(today: NaiveDate) -> Vec<List> {
             vec![
                 done(task("The Pragmatic Programmer", None, None, &["tech"]))
                     .note("Re-read the chapter on orthogonality."),
-                task(
-                    "Crafting Interpreters",
-                    Some(Priority::Medium),
-                    None,
-                    &["rust", "learning"],
-                )
-                .note("Up to the bytecode VM."),
-                task(
-                    "Designing Data-Intensive Applications",
-                    Some(Priority::Low),
-                    d(30),
-                    &["reference"],
-                ),
+                task("Crafting Interpreters", Some(Priority::Medium), None, &["rust", "learning"])
+                    .note("Up to the bytecode VM."),
+                task("Designing Data-Intensive Applications", Some(Priority::Low), d(30), &["reference"]),
                 task("Project Hail Mary", None, None, &["fiction"]),
             ],
         ),

@@ -20,16 +20,8 @@ fn base64_encode(input: &[u8]) -> String {
         let n = (b0 << 16) | (b1 << 8) | b2;
         out.push(B64[((n >> 18) & 0x3f) as usize] as char);
         out.push(B64[((n >> 12) & 0x3f) as usize] as char);
-        out.push(if chunk.len() > 1 {
-            B64[((n >> 6) & 0x3f) as usize] as char
-        } else {
-            '='
-        });
-        out.push(if chunk.len() > 2 {
-            B64[(n & 0x3f) as usize] as char
-        } else {
-            '='
-        });
+        out.push(if chunk.len() > 1 { B64[((n >> 6) & 0x3f) as usize] as char } else { '=' });
+        out.push(if chunk.len() > 2 { B64[(n & 0x3f) as usize] as char } else { '=' });
     }
     out
 }

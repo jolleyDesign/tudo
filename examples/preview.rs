@@ -34,9 +34,7 @@ fn hex(c: Color, default: &str) -> String {
 }
 
 fn esc(s: &str) -> String {
-    s.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
+    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
 }
 
 fn to_html(buf: &Buffer) -> String {
@@ -59,10 +57,7 @@ fn to_html(buf: &Buffer) -> String {
             if strike {
                 style.push_str("text-decoration:line-through;");
             }
-            out.push_str(&format!(
-                "<span style=\"{style}\">{}</span>",
-                esc(cell.symbol())
-            ));
+            out.push_str(&format!("<span style=\"{style}\">{}</span>", esc(cell.symbol())));
         }
         out.push('\n');
     }

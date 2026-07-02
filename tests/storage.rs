@@ -21,19 +21,10 @@ fn slugify_handles_punctuation_and_collisions() {
 fn parse_due_accepts_absolute_relative_and_empty() {
     let today = date(2026, 6, 28);
     assert_eq!(model::parse_due("", today).unwrap(), None);
-    assert_eq!(
-        model::parse_due("2026-07-01", today).unwrap(),
-        Some(date(2026, 7, 1))
-    );
+    assert_eq!(model::parse_due("2026-07-01", today).unwrap(), Some(date(2026, 7, 1)));
     assert_eq!(model::parse_due("today", today).unwrap(), Some(today));
-    assert_eq!(
-        model::parse_due("tomorrow", today).unwrap(),
-        Some(date(2026, 6, 29))
-    );
-    assert_eq!(
-        model::parse_due("+3", today).unwrap(),
-        Some(date(2026, 7, 1))
-    );
+    assert_eq!(model::parse_due("tomorrow", today).unwrap(), Some(date(2026, 6, 29)));
+    assert_eq!(model::parse_due("+3", today).unwrap(), Some(date(2026, 7, 1)));
     assert!(model::parse_due("not-a-date", today).is_err());
 }
 
@@ -91,10 +82,7 @@ fn save_is_atomic_and_leaves_no_temp_file() {
         .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
         .collect();
     assert!(entries.contains(&"tasks.json".to_string()));
-    assert!(
-        !entries.iter().any(|e| e.ends_with(".tmp")),
-        "no temp files should remain: {entries:?}"
-    );
+    assert!(!entries.iter().any(|e| e.ends_with(".tmp")), "no temp files should remain: {entries:?}");
 
     let loaded = storage::load_lists(dir.path()).unwrap();
     assert_eq!(loaded[0].tasks.len(), 1);
@@ -117,26 +105,14 @@ fn human_readable_json_on_disk() {
 
 #[test]
 fn theme_kinds_parse_and_cycle() {
-    assert_eq!(
-        ThemeKind::from_key("tokyo-night"),
-        Some(ThemeKind::TokyoNight)
-    );
-    assert_eq!(
-        ThemeKind::from_key("Catppuccin"),
-        Some(ThemeKind::CatppuccinMocha)
-    );
+    assert_eq!(ThemeKind::from_key("tokyo-night"), Some(ThemeKind::TokyoNight));
+    assert_eq!(ThemeKind::from_key("Catppuccin"), Some(ThemeKind::CatppuccinMocha));
     assert_eq!(ThemeKind::from_key("NORD"), Some(ThemeKind::Nord));
     assert_eq!(ThemeKind::from_key("gruvbox"), Some(ThemeKind::GruvboxDark));
     assert_eq!(ThemeKind::from_key("dracula"), Some(ThemeKind::Dracula));
     assert_eq!(ThemeKind::from_key("rose-pine"), Some(ThemeKind::RosePine));
-    assert_eq!(
-        ThemeKind::from_key("gruvbox-material"),
-        Some(ThemeKind::GruvboxMaterial)
-    );
-    assert_eq!(
-        ThemeKind::from_key("black and white"),
-        Some(ThemeKind::BlackWhite)
-    );
+    assert_eq!(ThemeKind::from_key("gruvbox-material"), Some(ThemeKind::GruvboxMaterial));
+    assert_eq!(ThemeKind::from_key("black and white"), Some(ThemeKind::BlackWhite));
     assert_eq!(ThemeKind::from_key("none"), Some(ThemeKind::Terminal));
     assert_eq!(ThemeKind::from_key("terminal"), Some(ThemeKind::Terminal));
     assert_eq!(ThemeKind::from_key("nonsense"), None);
@@ -158,11 +134,7 @@ fn load_lists_ignores_a_config_pointer_in_the_data_dir() {
     // Reproduces the crash when the data dir == config dir (~/.config/tudo):
     // config.json must not be parsed as a list.
     let dir = tempfile::tempdir().unwrap();
-    std::fs::write(
-        dir.path().join("config.json"),
-        r#"{ "data_dir": "/somewhere", "theme": "nord" }"#,
-    )
-    .unwrap();
+    std::fs::write(dir.path().join("config.json"), r#"{ "data_dir": "/somewhere", "theme": "nord" }"#).unwrap();
     let mut list = List::new("Work");
     list.slug = "work".to_string();
     storage::save_list(dir.path(), &list).unwrap();

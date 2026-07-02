@@ -57,13 +57,7 @@ pub struct InputState {
 }
 
 impl InputState {
-    fn new(
-        field: InputField,
-        prompt: &str,
-        buffer: String,
-        multiline: bool,
-        return_detail: bool,
-    ) -> Self {
+    fn new(field: InputField, prompt: &str, buffer: String, multiline: bool, return_detail: bool) -> Self {
         let cursor = buffer.chars().count();
         Self {
             field,
@@ -76,11 +70,7 @@ impl InputState {
     }
 
     fn byte_at(&self, char_idx: usize) -> usize {
-        self.buffer
-            .char_indices()
-            .nth(char_idx)
-            .map(|(b, _)| b)
-            .unwrap_or(self.buffer.len())
+        self.buffer.char_indices().nth(char_idx).map(|(b, _)| b).unwrap_or(self.buffer.len())
     }
 
     pub fn insert(&mut self, c: char) {
@@ -343,12 +333,8 @@ impl App {
             Some(dir) => {
                 let lists = storage::load_lists(&dir)?;
                 (dir, lists, Mode::Normal)
-            }
-            None => (
-                PathBuf::new(),
-                Vec::new(),
-                Mode::FirstRun(FirstRunState::new()),
-            ),
+            },
+            None => (PathBuf::new(), Vec::new(), Mode::FirstRun(FirstRunState::new())),
         };
 
         let theme = ThemeKind::default();
@@ -412,10 +398,7 @@ impl App {
 
     /// Open the theme picker, remembering the current theme to restore on cancel.
     pub fn open_theme_picker(&mut self) {
-        let selected = ThemeKind::all()
-            .iter()
-            .position(|&k| k == self.theme)
-            .unwrap_or(0);
+        let selected = ThemeKind::all().iter().position(|&k| k == self.theme).unwrap_or(0);
         self.mode = Mode::ThemePicker(ThemePickerState {
             selected,
             original: self.theme,
@@ -599,9 +582,7 @@ impl App {
 
     /// Raw index (into `tasks`) of the currently selected task.
     pub fn current_task_index(&self) -> Option<usize> {
-        self.visible_task_indices()
-            .get(self.selected_visible_task())
-            .copied()
+        self.visible_task_indices().get(self.selected_visible_task()).copied()
     }
 
     pub fn current_task(&self) -> Option<&Task> {
@@ -612,11 +593,7 @@ impl App {
     pub fn selected_subtask(&self) -> Option<usize> {
         let st = self.subtask_state.selected()?;
         let task = self.current_task()?;
-        if st < task.subtasks.len() {
-            Some(st)
-        } else {
-            None
-        }
+        if st < task.subtasks.len() { Some(st) } else { None }
     }
 
     // --- navigation ----------------------------------------------------------
@@ -704,22 +681,18 @@ impl App {
                 if !self.lists.is_empty() {
                     self.focus_tasks();
                 }
-            }
+            },
             Focus::Tasks => {
                 if self.current_task().is_some() {
                     self.open_detail();
                 }
-            }
+            },
         }
     }
 
     pub fn open_detail(&mut self) {
-        let has_subtasks = self
-            .current_task()
-            .map(|t| !t.subtasks.is_empty())
-            .unwrap_or(false);
-        self.subtask_state
-            .select(if has_subtasks { Some(0) } else { None });
+        let has_subtasks = self.current_task().map(|t| !t.subtasks.is_empty()).unwrap_or(false);
+        self.subtask_state.select(if has_subtasks { Some(0) } else { None });
         self.mode = Mode::Detail;
     }
 
@@ -791,7 +764,7 @@ impl App {
             Some(list) => {
                 list.name = name;
                 list.slug.clone()
-            }
+            },
             None => return,
         };
         self.save_list_at(li);
@@ -814,10 +787,7 @@ impl App {
             self.save_list_at(li);
             // Select the new task if it is visible under the current filter.
             let visible = self.visible_task_indices();
-            if let Some(pos) = visible
-                .iter()
-                .position(|&i| i + 1 == self.lists[li].tasks.len())
-            {
+            if let Some(pos) = visible.iter().position(|&i| i + 1 == self.lists[li].tasks.len()) {
                 self.task_state.select(Some(pos));
             }
             self.focus = Focus::Tasks;
@@ -846,10 +816,10 @@ impl App {
         match model::parse_due(input, Self::today()) {
             Ok(due) => {
                 self.with_current_task(|t| t.due = due);
-            }
+            },
             Err(_) => {
                 self.set_status("bad date — use YYYY-MM-DD, today, tomorrow, or +N".to_string());
-            }
+            },
         }
     }
 
@@ -913,12 +883,11 @@ impl App {
     /// Sort user lists by name (case-insensitive) and pin the Archived list to
     /// the bottom. A no-op ordering-wise when no archive exists.
     fn sort_lists(&mut self) {
-        self.lists
-            .sort_by(|a, b| match (a.is_archive(), b.is_archive()) {
-                (true, false) => std::cmp::Ordering::Greater,
-                (false, true) => std::cmp::Ordering::Less,
-                _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
-            });
+        self.lists.sort_by(|a, b| match (a.is_archive(), b.is_archive()) {
+            (true, false) => std::cmp::Ordering::Greater,
+            (false, true) => std::cmp::Ordering::Less,
+            _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
+        });
     }
 
     /// Create the Archived list (on disk and in memory) if it doesn't exist yet.
@@ -1034,8 +1003,7 @@ impl App {
         let task = list.tasks.remove(from);
         list.tasks.insert(dest, task);
         self.save_list_at(li);
-        self.task_state
-            .select(Some(if to_top { 0 } else { vis.len() - 1 }));
+        self.task_state.select(Some(if to_top { 0 } else { vis.len() - 1 }));
     }
 
     // --- move a task to another list -----------------------------------------
@@ -1049,9 +1017,7 @@ impl App {
         let src = self.selected_list();
         // Archiving has its own key (`d`), so keep the Archived list out of the
         // move picker. Moving *out* of it (to a real list) is how you unarchive.
-        let targets: Vec<usize> = (0..self.lists.len())
-            .filter(|&i| i != src && !self.lists[i].is_archive())
-            .collect();
+        let targets: Vec<usize> = (0..self.lists.len()).filter(|&i| i != src && !self.lists[i].is_archive()).collect();
         if targets.is_empty() {
             self.set_status("no other list to move to".to_string());
             return;
@@ -1109,11 +1075,7 @@ impl App {
     /// Close the picker without moving anything.
     pub fn move_picker_cancel(&mut self) {
         if let Mode::MovePicker(state) = &self.mode {
-            self.mode = if state.return_detail {
-                Mode::Detail
-            } else {
-                Mode::Normal
-            };
+            self.mode = if state.return_detail { Mode::Detail } else { Mode::Normal };
         }
     }
 
@@ -1165,11 +1127,7 @@ impl App {
             Mode::CopyMenu(state) => state.return_detail,
             _ => return,
         };
-        self.mode = if return_detail {
-            Mode::Detail
-        } else {
-            Mode::Normal
-        };
+        self.mode = if return_detail { Mode::Detail } else { Mode::Normal };
         let Some(text) = self.copy_payload(what) else {
             self.set_status("nothing to copy".to_string());
             return;
@@ -1188,11 +1146,7 @@ impl App {
     /// Close the copy menu without copying anything.
     pub fn copy_menu_cancel(&mut self) {
         if let Mode::CopyMenu(state) = &self.mode {
-            self.mode = if state.return_detail {
-                Mode::Detail
-            } else {
-                Mode::Normal
-            };
+            self.mode = if state.return_detail { Mode::Detail } else { Mode::Normal };
         }
     }
 
@@ -1290,13 +1244,7 @@ impl App {
     }
 
     pub fn start_add_list(&mut self) {
-        self.mode = Mode::Input(InputState::new(
-            InputField::NewList,
-            "New list name",
-            String::new(),
-            false,
-            false,
-        ));
+        self.mode = Mode::Input(InputState::new(InputField::NewList, "New list name", String::new(), false, false));
     }
 
     pub fn start_add_task(&mut self) {
@@ -1305,13 +1253,7 @@ impl App {
             self.set_status("create a list first (A)".to_string());
             return;
         }
-        self.mode = Mode::Input(InputState::new(
-            InputField::NewTask,
-            "New task",
-            String::new(),
-            false,
-            false,
-        ));
+        self.mode = Mode::Input(InputState::new(InputField::NewTask, "New task", String::new(), false, false));
     }
 
     /// Open the input to rename the selected list (prefilled with its name).
@@ -1324,13 +1266,7 @@ impl App {
             return;
         }
         let name = list.name.clone();
-        self.mode = Mode::Input(InputState::new(
-            InputField::RenameList,
-            "Rename list",
-            name,
-            false,
-            false,
-        ));
+        self.mode = Mode::Input(InputState::new(InputField::RenameList, "Rename list", name, false, false));
     }
 
     pub fn start_edit(&mut self) {
@@ -1348,26 +1284,14 @@ impl App {
                 .and_then(|t| t.subtasks.get(si))
                 .map(|s| s.title.clone())
                 .unwrap_or_default();
-            self.mode = Mode::Input(InputState::new(
-                InputField::EditSubtask,
-                "Edit subtask",
-                title,
-                false,
-                true,
-            ));
+            self.mode = Mode::Input(InputState::new(InputField::EditSubtask, "Edit subtask", title, false, true));
             return;
         }
         let Some(task) = self.current_task() else {
             return;
         };
         let title = task.title.clone();
-        self.mode = Mode::Input(InputState::new(
-            InputField::EditTask,
-            "Edit task",
-            title,
-            false,
-            self.in_detail(),
-        ));
+        self.mode = Mode::Input(InputState::new(InputField::EditTask, "Edit task", title, false, self.in_detail()));
     }
 
     pub fn start_set_due(&mut self) {
@@ -1419,13 +1343,7 @@ impl App {
         if !self.in_detail() {
             self.open_detail();
         }
-        self.mode = Mode::Input(InputState::new(
-            InputField::NewSubtask,
-            "New subtask",
-            String::new(),
-            false,
-            true,
-        ));
+        self.mode = Mode::Input(InputState::new(InputField::NewSubtask, "New subtask", String::new(), false, true));
     }
 
     pub fn start_search(&mut self) {
@@ -1470,7 +1388,7 @@ impl App {
                     action: ConfirmAction::DeleteList,
                     return_detail: false,
                 });
-            }
+            },
             Focus::Tasks => {
                 let Some(task) = self.current_task() else {
                     return;
@@ -1481,7 +1399,7 @@ impl App {
                     action: ConfirmAction::DeleteTask,
                     return_detail: self.in_detail(),
                 });
-            }
+            },
         }
     }
 
@@ -1516,7 +1434,7 @@ impl App {
             Err(e) => {
                 self.set_status(format!("load error: {e}"));
                 self.lists = Vec::new();
-            }
+            },
         }
         if self.lists.is_empty() {
             let mut list = List::new("Tasks");

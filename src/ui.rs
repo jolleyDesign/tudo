@@ -9,8 +9,7 @@ use ratatui::layout::{Alignment, Constraint, Layout, Margin, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{
-    Block, BorderType, Clear, List, ListItem, Padding, Paragraph, Scrollbar, ScrollbarOrientation,
-    ScrollbarState, Wrap,
+    Block, BorderType, Clear, List, ListItem, Padding, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap,
 };
 
 use crate::app::{App, Focus, Mode};
@@ -20,10 +19,7 @@ use crate::theme;
 
 pub fn render(f: &mut Frame, app: &mut App) {
     // Themed backdrop for the whole screen.
-    f.render_widget(
-        Block::default().style(Style::default().bg(theme::bg()).fg(theme::fg())),
-        f.area(),
-    );
+    f.render_widget(Block::default().style(Style::default().bg(theme::bg()).fg(theme::fg())), f.area());
 
     if matches!(app.mode, Mode::FirstRun(_)) {
         render_first_run(f, app);
@@ -40,28 +36,20 @@ pub fn render(f: &mut Frame, app: &mut App) {
         Mode::CopyMenu(_) => render_copy_menu(f, app),
         Mode::Settings => render_settings(f, app),
         Mode::Help => render_help(f, app),
-        _ => {}
+        _ => {},
     }
 }
 
 fn render_base(f: &mut Frame, app: &mut App) {
-    let [header, body, footer] = Layout::vertical([
-        Constraint::Length(1),
-        Constraint::Min(1),
-        Constraint::Length(1),
-    ])
-    .areas(f.area());
+    let [header, body, footer] =
+        Layout::vertical([Constraint::Length(1), Constraint::Min(1), Constraint::Length(1)]).areas(f.area());
 
-    let [sidebar, right] =
-        Layout::horizontal([Constraint::Length(26), Constraint::Min(20)]).areas(body);
+    let [sidebar, right] = Layout::horizontal([Constraint::Length(26), Constraint::Min(20)]).areas(body);
 
     let detail = matches!(app.mode, Mode::Detail);
     let (task_pct, detail_pct) = if detail { (50, 50) } else { (66, 34) };
-    let [tasks_area, detail_area] = Layout::vertical([
-        Constraint::Percentage(task_pct),
-        Constraint::Percentage(detail_pct),
-    ])
-    .areas(right);
+    let [tasks_area, detail_area] =
+        Layout::vertical([Constraint::Percentage(task_pct), Constraint::Percentage(detail_pct)]).areas(right);
 
     render_header(f, header, app);
     render_sidebar(f, sidebar, app);
@@ -71,24 +59,12 @@ fn render_base(f: &mut Frame, app: &mut App) {
 }
 
 fn render_header(f: &mut Frame, area: Rect, app: &App) {
-    f.render_widget(
-        Block::default().style(Style::default().bg(theme::surface())),
-        area,
-    );
-    let [left, rightside] =
-        Layout::horizontal([Constraint::Length(12), Constraint::Min(10)]).areas(area);
+    f.render_widget(Block::default().style(Style::default().bg(theme::surface())), area);
+    let [left, rightside] = Layout::horizontal([Constraint::Length(12), Constraint::Min(10)]).areas(area);
 
     let title = Line::from(vec![
-        Span::styled(
-            format!(" {} ", theme::DIAMOND),
-            Style::default().fg(theme::accent()),
-        ),
-        Span::styled(
-            "tudo",
-            Style::default()
-                .fg(theme::accent())
-                .add_modifier(Modifier::BOLD),
-        ),
+        Span::styled(format!(" {} ", theme::DIAMOND), Style::default().fg(theme::accent())),
+        Span::styled("tudo", Style::default().fg(theme::accent()).add_modifier(Modifier::BOLD)),
     ]);
     f.render_widget(Paragraph::new(title), left);
 
@@ -99,15 +75,12 @@ fn render_header(f: &mut Frame, area: Rect, app: &App) {
             let d = l.tasks.len() - a;
             let o = l.tasks.iter().filter(|t| t.is_overdue(today)).count();
             (a, d, o)
-        }
+        },
         None => (0, 0, 0),
     };
 
     let mut spans = vec![
-        Span::styled(
-            today.format("%a %d %b").to_string(),
-            Style::default().fg(theme::muted()),
-        ),
+        Span::styled(today.format("%a %d %b").to_string(), Style::default().fg(theme::muted())),
         Span::raw("    "),
         Span::styled(format!("{active} active"), Style::default().fg(theme::fg())),
         Span::styled(" · ", Style::default().fg(theme::muted())),
@@ -117,16 +90,11 @@ fn render_header(f: &mut Frame, area: Rect, app: &App) {
         spans.push(Span::styled(" · ", Style::default().fg(theme::muted())));
         spans.push(Span::styled(
             format!("{} {overdue} overdue", theme::FLAG),
-            Style::default()
-                .fg(theme::red())
-                .add_modifier(Modifier::BOLD),
+            Style::default().fg(theme::red()).add_modifier(Modifier::BOLD),
         ));
     }
     spans.push(Span::raw(" "));
-    f.render_widget(
-        Paragraph::new(Line::from(spans)).alignment(Alignment::Right),
-        rightside,
-    );
+    f.render_widget(Paragraph::new(Line::from(spans)).alignment(Alignment::Right), rightside);
 }
 
 fn pane_block(title: &str, focused: bool) -> Block<'static> {
@@ -137,16 +105,8 @@ fn pane_block(title: &str, focused: bool) -> Block<'static> {
         .title(Span::styled(
             format!(" {title} "),
             Style::default()
-                .fg(if focused {
-                    theme::accent()
-                } else {
-                    theme::muted()
-                })
-                .add_modifier(if focused {
-                    Modifier::BOLD
-                } else {
-                    Modifier::empty()
-                }),
+                .fg(if focused { theme::accent() } else { theme::muted() })
+                .add_modifier(if focused { Modifier::BOLD } else { Modifier::empty() }),
         ))
 }
 
@@ -162,17 +122,10 @@ fn render_sidebar(f: &mut Frame, area: Rect, app: &mut App) {
             let open = l.open_count();
             let total = l.tasks.len();
             // The Archived list sits at the bottom, rendered dimmer than the rest.
-            let name_fg = if l.is_archive() {
-                theme::muted()
-            } else {
-                theme::fg()
-            };
+            let name_fg = if l.is_archive() { theme::muted() } else { theme::fg() };
             ListItem::new(Line::from(vec![
                 Span::styled(l.name.clone(), Style::default().fg(name_fg)),
-                Span::styled(
-                    format!("  {open}/{total}"),
-                    Style::default().fg(theme::muted()),
-                ),
+                Span::styled(format!("  {open}/{total}"), Style::default().fg(theme::muted())),
             ]))
         })
         .collect();
@@ -247,10 +200,7 @@ fn task_line(t: &Task, today: NaiveDate) -> Line<'static> {
 
     // priority dot (aligned slot)
     match t.priority {
-        Some(p) => spans.push(Span::styled(
-            format!("{} ", theme::DOT),
-            Style::default().fg(theme::priority_color(p)),
-        )),
+        Some(p) => spans.push(Span::styled(format!("{} ", theme::DOT), Style::default().fg(theme::priority_color(p)))),
         None => spans.push(Span::raw("  ")),
     }
 
@@ -260,9 +210,7 @@ fn task_line(t: &Task, today: NaiveDate) -> Line<'static> {
 
     // title
     let title_style = if t.done {
-        Style::default()
-            .fg(theme::muted())
-            .add_modifier(Modifier::CROSSED_OUT)
+        Style::default().fg(theme::muted()).add_modifier(Modifier::CROSSED_OUT)
     } else {
         Style::default().fg(theme::fg())
     };
@@ -276,10 +224,7 @@ fn task_line(t: &Task, today: NaiveDate) -> Line<'static> {
 
     // tags
     for tag in &t.tags {
-        spans.push(Span::styled(
-            format!("  #{tag}"),
-            Style::default().fg(theme::purple()),
-        ));
+        spans.push(Span::styled(format!("  #{tag}"), Style::default().fg(theme::purple())));
     }
 
     // due date (human-friendly)
@@ -298,10 +243,7 @@ fn render_detail(f: &mut Frame, area: Rect, app: &App) {
     f.render_widget(block, area);
 
     let Some(task) = app.current_task() else {
-        f.render_widget(
-            empty_hint("Select a task to see details.\nPress Enter to open the detail view."),
-            inner,
-        );
+        f.render_widget(empty_hint("Select a task to see details.\nPress Enter to open the detail view."), inner);
         return;
     };
 
@@ -311,12 +253,7 @@ fn render_detail(f: &mut Frame, area: Rect, app: &App) {
     lines.push(Line::from(vec![
         checkbox_span(task.done),
         Span::raw(" "),
-        Span::styled(
-            task.title.clone(),
-            Style::default()
-                .fg(theme::fg())
-                .add_modifier(Modifier::BOLD),
-        ),
+        Span::styled(task.title.clone(), Style::default().fg(theme::fg()).add_modifier(Modifier::BOLD)),
     ]));
 
     // meta line
@@ -324,36 +261,21 @@ fn render_detail(f: &mut Frame, area: Rect, app: &App) {
         Span::styled("status ", Style::default().fg(theme::muted())),
         Span::styled(
             if task.done { "done" } else { "open" }.to_string(),
-            Style::default().fg(if task.done {
-                theme::green()
-            } else {
-                theme::fg()
-            }),
+            Style::default().fg(if task.done { theme::green() } else { theme::fg() }),
         ),
     ];
     if task.done
         && let Some(at) = task.completed_at
     {
+        meta.push(Span::styled("   completed ", Style::default().fg(theme::muted())));
         meta.push(Span::styled(
-            "   completed ",
-            Style::default().fg(theme::muted()),
-        ));
-        meta.push(Span::styled(
-            at.with_timezone(&Local)
-                .format("%d %b %Y, %H:%M")
-                .to_string(),
+            at.with_timezone(&Local).format("%d %b %Y, %H:%M").to_string(),
             Style::default().fg(theme::green()),
         ));
     }
     if let Some(p) = task.priority {
-        meta.push(Span::styled(
-            "   priority ",
-            Style::default().fg(theme::muted()),
-        ));
-        meta.push(Span::styled(
-            format!("{} {}", theme::DOT, p.label()),
-            Style::default().fg(theme::priority_color(p)),
-        ));
+        meta.push(Span::styled("   priority ", Style::default().fg(theme::muted())));
+        meta.push(Span::styled(format!("{} {}", theme::DOT, p.label()), Style::default().fg(theme::priority_color(p))));
     }
     if let Some(due) = task.due {
         meta.push(Span::styled("   due ", Style::default().fg(theme::muted())));
@@ -364,10 +286,7 @@ fn render_detail(f: &mut Frame, area: Rect, app: &App) {
     if !task.tags.is_empty() {
         let mut tag_spans = vec![Span::styled("tags ", Style::default().fg(theme::muted()))];
         for tag in &task.tags {
-            tag_spans.push(Span::styled(
-                format!(" #{tag} "),
-                Style::default().fg(theme::purple()),
-            ));
+            tag_spans.push(Span::styled(format!(" #{tag} "), Style::default().fg(theme::purple())));
         }
         lines.push(Line::from(tag_spans));
     }
@@ -375,16 +294,10 @@ fn render_detail(f: &mut Frame, area: Rect, app: &App) {
     lines.push(Line::raw(""));
     lines.push(section_header("Notes"));
     if task.notes.trim().is_empty() {
-        lines.push(Line::from(Span::styled(
-            "(none — press n to add)",
-            Style::default().fg(theme::muted()),
-        )));
+        lines.push(Line::from(Span::styled("(none — press n to add)", Style::default().fg(theme::muted()))));
     } else {
         for line in task.notes.lines() {
-            lines.push(Line::from(Span::styled(
-                line.to_string(),
-                Style::default().fg(theme::fg()),
-            )));
+            lines.push(Line::from(Span::styled(line.to_string(), Style::default().fg(theme::fg()))));
         }
     }
 
@@ -393,31 +306,19 @@ fn render_detail(f: &mut Frame, area: Rect, app: &App) {
     if let Some((done, total)) = task.subtask_progress() {
         sub_header.push(Span::raw("  "));
         sub_header.extend(progress_spans(done, total, 8));
-        sub_header.push(Span::styled(
-            format!("  {done}/{total}"),
-            Style::default().fg(theme::muted()),
-        ));
+        sub_header.push(Span::styled(format!("  {done}/{total}"), Style::default().fg(theme::muted())));
     }
     lines.push(Line::from(sub_header));
 
     if task.subtasks.is_empty() {
-        lines.push(Line::from(Span::styled(
-            "(none — press s to add)",
-            Style::default().fg(theme::muted()),
-        )));
+        lines.push(Line::from(Span::styled("(none — press s to add)", Style::default().fg(theme::muted()))));
     } else {
-        let sel = if active {
-            app.subtask_state.selected()
-        } else {
-            None
-        };
+        let sel = if active { app.subtask_state.selected() } else { None };
         for (i, s) in task.subtasks.iter().enumerate() {
             let selected = sel == Some(i);
             let marker = if selected { "\u{258e} " } else { "  " };
             let mut title_style = if s.done {
-                Style::default()
-                    .fg(theme::muted())
-                    .add_modifier(Modifier::CROSSED_OUT)
+                Style::default().fg(theme::muted()).add_modifier(Modifier::CROSSED_OUT)
             } else {
                 Style::default().fg(theme::fg())
             };
@@ -433,17 +334,11 @@ fn render_detail(f: &mut Frame, area: Rect, app: &App) {
         }
     }
 
-    f.render_widget(
-        Paragraph::new(Text::from(lines)).wrap(Wrap { trim: false }),
-        inner,
-    );
+    f.render_widget(Paragraph::new(Text::from(lines)).wrap(Wrap { trim: false }), inner);
 }
 
 fn render_footer(f: &mut Frame, area: Rect, app: &App) {
-    f.render_widget(
-        Block::default().style(Style::default().bg(theme::surface())),
-        area,
-    );
+    f.render_widget(Block::default().style(Style::default().bg(theme::surface())), area);
 
     // Keep the footer minimal: just the escape hatches. The full keybinding
     // list lives in the `?` help overlay. Keys come from the live keymap so
@@ -471,16 +366,12 @@ fn render_footer(f: &mut Frame, area: Rect, app: &App) {
     }
 
     let right_w = right.chars().count() as u16 + 1;
-    let [left_area, right_area] =
-        Layout::horizontal([Constraint::Min(10), Constraint::Length(right_w)]).areas(area);
+    let [left_area, right_area] = Layout::horizontal([Constraint::Min(10), Constraint::Length(right_w)]).areas(area);
 
     f.render_widget(Paragraph::new(chip_line(&chips)), left_area);
     f.render_widget(
-        Paragraph::new(Line::from(Span::styled(
-            right,
-            Style::default().fg(theme::amber()),
-        )))
-        .alignment(Alignment::Right),
+        Paragraph::new(Line::from(Span::styled(right, Style::default().fg(theme::amber()))))
+            .alignment(Alignment::Right),
         right_area,
     );
 }
@@ -499,11 +390,7 @@ fn render_input(f: &mut Frame, app: &App) {
     f.render_widget(block, area);
 
     f.render_widget(
-        Paragraph::new(Span::styled(
-            input.buffer.clone(),
-            Style::default().fg(theme::fg()),
-        ))
-        .wrap(Wrap { trim: false }),
+        Paragraph::new(Span::styled(input.buffer.clone(), Style::default().fg(theme::fg()))).wrap(Wrap { trim: false }),
         inner,
     );
 
@@ -539,23 +426,11 @@ fn render_confirm(f: &mut Frame, app: &App) {
     let block = overlay_block("Confirm", theme::red());
     let text = Text::from(vec![
         Line::raw(""),
-        Line::from(Span::styled(
-            c.prompt.clone(),
-            Style::default().fg(theme::fg()),
-        )),
+        Line::from(Span::styled(c.prompt.clone(), Style::default().fg(theme::fg()))),
         Line::raw(""),
-        Line::from(Span::styled(
-            "y / Enter = yes      any other key = no",
-            Style::default().fg(theme::muted()),
-        )),
+        Line::from(Span::styled("y / Enter = yes      any other key = no", Style::default().fg(theme::muted()))),
     ]);
-    f.render_widget(
-        Paragraph::new(text)
-            .block(block)
-            .alignment(Alignment::Center)
-            .wrap(Wrap { trim: true }),
-        area,
-    );
+    f.render_widget(Paragraph::new(text).block(block).alignment(Alignment::Center).wrap(Wrap { trim: true }), area);
 }
 
 /// Space-joined labels for every chord bound to the given actions, e.g.
@@ -573,10 +448,7 @@ fn keys_for(app: &App, actions: &[Action]) -> String {
 
 /// The first (primary) bound key for an action, for compact one-key hints.
 fn primary_key(app: &App, action: Action) -> String {
-    app.keymap
-        .primary(action)
-        .map(|c| c.display())
-        .unwrap_or_default()
+    app.keymap.primary(action).map(|c| c.display()).unwrap_or_default()
 }
 
 fn render_help(f: &mut Frame, app: &App) {
@@ -589,26 +461,15 @@ fn render_help(f: &mut Frame, app: &App) {
     // Grouped bindings in two columns above a one-line footer, so the whole
     // cheat-sheet stays short enough to fit a typical terminal.
     let [body, footer] = Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(inner);
-    let [left, right] =
-        Layout::horizontal([Constraint::Percentage(56), Constraint::Percentage(44)]).areas(body);
+    let [left, right] = Layout::horizontal([Constraint::Percentage(56), Constraint::Percentage(44)]).areas(body);
 
     let header = |t: &str| {
-        Line::from(Span::styled(
-            t.to_string(),
-            Style::default()
-                .fg(theme::accent())
-                .add_modifier(Modifier::BOLD),
-        ))
+        Line::from(Span::styled(t.to_string(), Style::default().fg(theme::accent()).add_modifier(Modifier::BOLD)))
     };
     // A `key … description` row; the key is padded to `kw` so descriptions align.
     let row = |keys: &str, desc: &str, kw: usize| {
         Line::from(vec![
-            Span::styled(
-                format!("{keys:<kw$}"),
-                Style::default()
-                    .fg(theme::fg())
-                    .add_modifier(Modifier::BOLD),
-            ),
+            Span::styled(format!("{keys:<kw$}"), Style::default().fg(theme::fg()).add_modifier(Modifier::BOLD)),
             Span::styled(desc.to_string(), Style::default().fg(theme::muted())),
         ])
     };
@@ -616,34 +477,15 @@ fn render_help(f: &mut Frame, app: &App) {
     const LW: usize = 12;
     let left_lines = vec![
         header("Navigate"),
-        row(
-            &keys_for(
-                app,
-                &[Action::ToggleFocus, Action::FocusLists, Action::FocusTasks],
-            ),
-            "switch pane",
-            LW,
-        ),
-        row(
-            &keys_for(app, &[Action::MoveDown, Action::MoveUp]),
-            "move cursor",
-            LW,
-        ),
+        row(&keys_for(app, &[Action::ToggleFocus, Action::FocusLists, Action::FocusTasks]), "switch pane", LW),
+        row(&keys_for(app, &[Action::MoveDown, Action::MoveUp]), "move cursor", LW),
         row(&keys_for(app, &[Action::Activate]), "open / drill in", LW),
         row(&keys_for(app, &[Action::Back]), "back / clear", LW),
         Line::raw(""),
         header("Organize"),
         row(&keys_for(app, &[Action::ToggleDone]), "toggle done", LW),
-        row(
-            &keys_for(app, &[Action::ReorderDown, Action::ReorderUp]),
-            "move up / down",
-            LW,
-        ),
-        row(
-            &keys_for(app, &[Action::SendTop, Action::SendBottom]),
-            "to top / bottom",
-            LW,
-        ),
+        row(&keys_for(app, &[Action::ReorderDown, Action::ReorderUp]), "move up / down", LW),
+        row(&keys_for(app, &[Action::SendTop, Action::SendBottom]), "to top / bottom", LW),
         row(&keys_for(app, &[Action::MoveTask]), "move / unarchive", LW),
         Line::raw(""),
         header("Find"),
@@ -655,11 +497,7 @@ fn render_help(f: &mut Frame, app: &App) {
     const RW: usize = 5;
     let right_lines = vec![
         header("Create & edit"),
-        row(
-            &keys_for(app, &[Action::AddTask, Action::AddList]),
-            "add task / list",
-            RW,
-        ),
+        row(&keys_for(app, &[Action::AddTask, Action::AddList]), "add task / list", RW),
         row(&keys_for(app, &[Action::Edit]), "edit / rename", RW),
         row(&keys_for(app, &[Action::AddSubtask]), "add subtask", RW),
         Line::raw(""),
@@ -676,21 +514,14 @@ fn render_help(f: &mut Frame, app: &App) {
         header("App"),
         row(&keys_for(app, &[Action::ThemePicker]), "theme", RW),
         row(&keys_for(app, &[Action::Settings]), "settings", RW),
-        row(
-            &keys_for(app, &[Action::Help, Action::Quit]),
-            "help / quit",
-            RW,
-        ),
+        row(&keys_for(app, &[Action::Help, Action::Quit]), "help / quit", RW),
     ];
 
     f.render_widget(Paragraph::new(Text::from(left_lines)), left);
     f.render_widget(Paragraph::new(Text::from(right_lines)), right);
     f.render_widget(
-        Paragraph::new(Line::from(Span::styled(
-            "press any key to close",
-            Style::default().fg(theme::muted()),
-        )))
-        .alignment(Alignment::Center),
+        Paragraph::new(Line::from(Span::styled("press any key to close", Style::default().fg(theme::muted()))))
+            .alignment(Alignment::Center),
         footer,
     );
 }
@@ -712,9 +543,7 @@ fn render_theme_picker(f: &mut Frame, app: &App) {
         let selected = i == state.selected;
         let marker = if selected { "\u{258e} " } else { "  " };
         let name_style = if selected {
-            Style::default()
-                .fg(theme::accent())
-                .add_modifier(Modifier::BOLD)
+            Style::default().fg(theme::accent()).add_modifier(Modifier::BOLD)
         } else {
             Style::default().fg(theme::fg())
         };
@@ -748,15 +577,9 @@ fn render_move_picker(f: &mut Frame, app: &App) {
     let inner = block.inner(area);
     f.render_widget(block, area);
 
-    let moving = app
-        .current_task()
-        .map(|t| t.title.clone())
-        .unwrap_or_default();
+    let moving = app.current_task().map(|t| t.title.clone()).unwrap_or_default();
     let mut lines: Vec<Line> = vec![
-        Line::from(Span::styled(
-            format!("Move \u{201c}{moving}\u{201d} to:"),
-            Style::default().fg(theme::muted()),
-        )),
+        Line::from(Span::styled(format!("Move \u{201c}{moving}\u{201d} to:"), Style::default().fg(theme::muted()))),
         Line::raw(""),
     ];
     for (i, &li) in state.targets.iter().enumerate() {
@@ -764,19 +587,14 @@ fn render_move_picker(f: &mut Frame, app: &App) {
         let selected = i == state.selected;
         let marker = if selected { "\u{258e} " } else { "  " };
         let name_style = if selected {
-            Style::default()
-                .fg(theme::accent())
-                .add_modifier(Modifier::BOLD)
+            Style::default().fg(theme::accent()).add_modifier(Modifier::BOLD)
         } else {
             Style::default().fg(theme::fg())
         };
         lines.push(Line::from(vec![
             Span::styled(marker, Style::default().fg(theme::accent())),
             Span::styled(format!("{:<22}", list.name), name_style),
-            Span::styled(
-                format!("{}/{}", list.open_count(), list.tasks.len()),
-                Style::default().fg(theme::muted()),
-            ),
+            Span::styled(format!("{}/{}", list.open_count(), list.tasks.len()), Style::default().fg(theme::muted())),
         ]));
     }
     lines.push(Line::raw(""));
@@ -799,24 +617,16 @@ fn render_copy_menu(f: &mut Frame, app: &App) {
     let inner = block.inner(area);
     f.render_widget(block, area);
 
-    let title = app
-        .current_task()
-        .map(|t| t.title.clone())
-        .unwrap_or_default();
+    let title = app.current_task().map(|t| t.title.clone()).unwrap_or_default();
     let mut lines: Vec<Line> = vec![
-        Line::from(Span::styled(
-            format!("Copy from \u{201c}{title}\u{201d}:"),
-            Style::default().fg(theme::muted()),
-        )),
+        Line::from(Span::styled(format!("Copy from \u{201c}{title}\u{201d}:"), Style::default().fg(theme::muted()))),
         Line::raw(""),
     ];
     for (i, what) in options.iter().enumerate() {
         let selected = i == state.selected;
         let marker = if selected { "\u{258e} " } else { "  " };
         let name_style = if selected {
-            Style::default()
-                .fg(theme::accent())
-                .add_modifier(Modifier::BOLD)
+            Style::default().fg(theme::accent()).add_modifier(Modifier::BOLD)
         } else {
             Style::default().fg(theme::fg())
         };
@@ -846,24 +656,11 @@ fn render_settings(f: &mut Frame, app: &App) {
     let value = |s: String| Span::styled(s, Style::default().fg(theme::fg()));
 
     let mut lines: Vec<Line> = vec![
-        Line::from(vec![
-            label("Data directory"),
-            value(app.data_dir.display().to_string()),
-        ]),
+        Line::from(vec![label("Data directory"), value(app.data_dir.display().to_string())]),
         Line::from(vec![label("Config file"), value(app.config_path_display())]),
-        Line::from(vec![
-            label("Format"),
-            value("JSON — one file per list, plus config.json".to_string()),
-        ]),
+        Line::from(vec![label("Format"), value("JSON — one file per list, plus config.json".to_string())]),
         Line::from(vec![label("Theme"), value(app.theme.name().to_string())]),
-        Line::from(vec![
-            label("Contents"),
-            value(format!(
-                "{} lists · {} tasks",
-                app.lists.len(),
-                app.task_count()
-            )),
-        ]),
+        Line::from(vec![label("Contents"), value(format!("{} lists · {} tasks", app.lists.len(), app.task_count()))]),
     ];
 
     // Active environment overrides, if any.
@@ -876,44 +673,22 @@ fn render_settings(f: &mut Frame, app: &App) {
     .filter_map(|(k, v)| v.map(|v| format!("{k}={v}")))
     .collect();
     if !overrides.is_empty() {
-        lines.push(Line::from(vec![
-            label("Overrides"),
-            value(overrides.join("  ")),
-        ]));
+        lines.push(Line::from(vec![label("Overrides"), value(overrides.join("  "))]));
     }
 
     lines.push(Line::raw(""));
     lines.push(Line::from(vec![
-        Span::styled(
-            "d",
-            Style::default()
-                .fg(theme::accent())
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(
-            "  change data directory (moves your lists)",
-            Style::default().fg(theme::fg()),
-        ),
+        Span::styled("d", Style::default().fg(theme::accent()).add_modifier(Modifier::BOLD)),
+        Span::styled("  change data directory (moves your lists)", Style::default().fg(theme::fg())),
     ]));
     lines.push(Line::from(vec![
-        Span::styled(
-            "t",
-            Style::default()
-                .fg(theme::accent())
-                .add_modifier(Modifier::BOLD),
-        ),
+        Span::styled("t", Style::default().fg(theme::accent()).add_modifier(Modifier::BOLD)),
         Span::styled("  open the theme picker", Style::default().fg(theme::fg())),
     ]));
     lines.push(Line::raw(""));
-    lines.push(Line::from(Span::styled(
-        "Esc / S to close",
-        Style::default().fg(theme::muted()),
-    )));
+    lines.push(Line::from(Span::styled("Esc / S to close", Style::default().fg(theme::muted()))));
 
-    f.render_widget(
-        Paragraph::new(Text::from(lines)).wrap(Wrap { trim: false }),
-        inner,
-    );
+    f.render_widget(Paragraph::new(Text::from(lines)).wrap(Wrap { trim: false }), inner);
 }
 
 fn render_first_run(f: &mut Frame, app: &App) {
@@ -929,22 +704,13 @@ fn render_first_run(f: &mut Frame, app: &App) {
     let mut lines: Vec<Line> = Vec::new();
     lines.push(Line::from(Span::styled(
         "Where should your todo lists be stored?",
-        Style::default()
-            .fg(theme::fg())
-            .add_modifier(Modifier::BOLD),
+        Style::default().fg(theme::fg()).add_modifier(Modifier::BOLD),
     )));
-    lines.push(Line::from(Span::styled(
-        "j/k to move · Enter to choose",
-        Style::default().fg(theme::muted()),
-    )));
+    lines.push(Line::from(Span::styled("j/k to move · Enter to choose", Style::default().fg(theme::muted()))));
     lines.push(Line::raw(""));
     for (i, (label, path)) in fr.options.iter().enumerate() {
         let selected = !fr.editing_custom && fr.selected == i;
-        lines.push(option_line(
-            selected,
-            label,
-            Some(&path.display().to_string()),
-        ));
+        lines.push(option_line(selected, label, Some(&path.display().to_string())));
     }
     let custom_selected = !fr.editing_custom && fr.selected == fr.options.len();
     lines.push(option_line(custom_selected, "Custom path…", None));
@@ -956,29 +722,17 @@ fn render_first_run(f: &mut Frame, app: &App) {
             Span::styled(fr.custom.clone(), Style::default().fg(theme::fg())),
             Span::styled("\u{2588}", Style::default().fg(theme::accent())),
         ]));
-        lines.push(Line::from(Span::styled(
-            "Enter = confirm · Esc = back",
-            Style::default().fg(theme::muted()),
-        )));
+        lines.push(Line::from(Span::styled("Enter = confirm · Esc = back", Style::default().fg(theme::muted()))));
     } else {
         lines.push(Line::raw(""));
-        lines.push(Line::from(Span::styled(
-            "q / Esc = quit",
-            Style::default().fg(theme::muted()),
-        )));
+        lines.push(Line::from(Span::styled("q / Esc = quit", Style::default().fg(theme::muted()))));
     }
 
     if !app.status.is_empty() {
-        lines.push(Line::from(Span::styled(
-            app.status.clone(),
-            Style::default().fg(theme::red()),
-        )));
+        lines.push(Line::from(Span::styled(app.status.clone(), Style::default().fg(theme::red()))));
     }
 
-    f.render_widget(
-        Paragraph::new(Text::from(lines)).wrap(Wrap { trim: false }),
-        inner,
-    );
+    f.render_widget(Paragraph::new(Text::from(lines)).wrap(Wrap { trim: false }), inner);
 }
 
 // --- small builders ---------------------------------------------------------
@@ -992,12 +746,7 @@ fn checkbox_span(done: bool) -> Span<'static> {
 }
 
 fn section_header(title: &str) -> Line<'static> {
-    Line::from(Span::styled(
-        title.to_string(),
-        Style::default()
-            .fg(theme::accent())
-            .add_modifier(Modifier::BOLD),
-    ))
+    Line::from(Span::styled(title.to_string(), Style::default().fg(theme::accent()).add_modifier(Modifier::BOLD)))
 }
 
 fn empty_hint(msg: &str) -> Paragraph<'static> {
@@ -1010,21 +759,14 @@ fn empty_hint(msg: &str) -> Paragraph<'static> {
 fn option_line(selected: bool, label: &str, path: Option<&str>) -> Line<'static> {
     let marker = if selected { "\u{258e} " } else { "  " };
     let label_style = if selected {
-        Style::default()
-            .fg(theme::accent())
-            .add_modifier(Modifier::BOLD)
+        Style::default().fg(theme::accent()).add_modifier(Modifier::BOLD)
     } else {
         Style::default().fg(theme::fg())
     };
-    let mut spans = vec![
-        Span::styled(marker, Style::default().fg(theme::accent())),
-        Span::styled(label.to_string(), label_style),
-    ];
+    let mut spans =
+        vec![Span::styled(marker, Style::default().fg(theme::accent())), Span::styled(label.to_string(), label_style)];
     if let Some(p) = path {
-        spans.push(Span::styled(
-            format!("   {p}"),
-            Style::default().fg(theme::muted()),
-        ));
+        spans.push(Span::styled(format!("   {p}"), Style::default().fg(theme::muted())));
     }
     Line::from(spans)
 }
@@ -1034,17 +776,9 @@ fn chip_line(chips: &[(&str, &str)]) -> Line<'static> {
     let mut spans: Vec<Span> = vec![Span::raw(" ")];
     for (key, rest) in chips {
         spans.push(Span::styled("[", Style::default().fg(theme::muted())));
-        spans.push(Span::styled(
-            key.to_string(),
-            Style::default()
-                .fg(theme::accent())
-                .add_modifier(Modifier::BOLD),
-        ));
+        spans.push(Span::styled(key.to_string(), Style::default().fg(theme::accent()).add_modifier(Modifier::BOLD)));
         spans.push(Span::styled("]", Style::default().fg(theme::muted())));
-        spans.push(Span::styled(
-            rest.to_string(),
-            Style::default().fg(theme::fg()),
-        ));
+        spans.push(Span::styled(rest.to_string(), Style::default().fg(theme::fg())));
         spans.push(Span::raw("  "));
     }
     Line::from(spans)
@@ -1053,22 +787,13 @@ fn chip_line(chips: &[(&str, &str)]) -> Line<'static> {
 /// `done`/`total` rendered as a `▓▓▓░` bar of `width` cells.
 fn progress_spans(done: usize, total: usize, width: usize) -> Vec<Span<'static>> {
     // round(done/total * width); checked_div yields None when total == 0
-    let filled = ((done * width) + total / 2)
-        .checked_div(total)
-        .unwrap_or(0)
-        .min(width);
+    let filled = ((done * width) + total / 2).checked_div(total).unwrap_or(0).min(width);
     let mut spans = Vec::new();
     if filled > 0 {
-        spans.push(Span::styled(
-            theme::BAR_FULL.repeat(filled),
-            Style::default().fg(theme::green()),
-        ));
+        spans.push(Span::styled(theme::BAR_FULL.repeat(filled), Style::default().fg(theme::green())));
     }
     if width > filled {
-        spans.push(Span::styled(
-            theme::BAR_EMPTY.repeat(width - filled),
-            Style::default().fg(theme::muted()),
-        ));
+        spans.push(Span::styled(theme::BAR_EMPTY.repeat(width - filled), Style::default().fg(theme::muted())));
     }
     spans
 }
@@ -1117,10 +842,7 @@ fn render_scrollbar(f: &mut Frame, area: Rect, total: usize, position: usize) {
 
 fn overlay_clear(f: &mut Frame, area: Rect) {
     f.render_widget(Clear, area);
-    f.render_widget(
-        Block::default().style(Style::default().bg(theme::bg()).fg(theme::fg())),
-        area,
-    );
+    f.render_widget(Block::default().style(Style::default().bg(theme::bg()).fg(theme::fg())), area);
 }
 
 fn overlay_block(title: &str, accent: ratatui::style::Color) -> Block<'static> {
@@ -1129,10 +851,7 @@ fn overlay_block(title: &str, accent: ratatui::style::Color) -> Block<'static> {
         .border_style(Style::default().fg(accent))
         .style(Style::default().bg(theme::bg()))
         .padding(Padding::horizontal(1))
-        .title(Span::styled(
-            format!(" {title} "),
-            Style::default().fg(accent).add_modifier(Modifier::BOLD),
-        ))
+        .title(Span::styled(format!(" {title} "), Style::default().fg(accent).add_modifier(Modifier::BOLD)))
 }
 
 /// A centered rectangle of a fixed column width (capped to the area) and height.

@@ -124,17 +124,11 @@ fn set_due_valid_and_invalid() {
     app.add_task("t".to_string());
 
     app.set_current_due("2026-12-31");
-    assert_eq!(
-        app.current_task().unwrap().due,
-        chrono::NaiveDate::from_ymd_opt(2026, 12, 31)
-    );
+    assert_eq!(app.current_task().unwrap().due, chrono::NaiveDate::from_ymd_opt(2026, 12, 31));
 
     app.set_current_due("garbage");
     // unchanged, and a helpful status message is set
-    assert_eq!(
-        app.current_task().unwrap().due,
-        chrono::NaiveDate::from_ymd_opt(2026, 12, 31)
-    );
+    assert_eq!(app.current_task().unwrap().due, chrono::NaiveDate::from_ymd_opt(2026, 12, 31));
     assert!(!app.status.is_empty());
 
     app.set_current_due(""); // clears
@@ -149,10 +143,7 @@ fn set_tags_parses_input() {
     app.add_task("t".to_string());
 
     app.set_current_tags("#a, B  a");
-    assert_eq!(
-        app.current_task().unwrap().tags,
-        vec!["a".to_string(), "b".to_string()]
-    );
+    assert_eq!(app.current_task().unwrap().tags, vec!["a".to_string(), "b".to_string()]);
 }
 
 #[test]
@@ -214,14 +205,8 @@ fn reorder_and_send_task_within_list_persists() {
     app.add_task("a".to_string());
     app.add_task("b".to_string());
     app.add_task("c".to_string());
-    let titles = |app: &App| -> Vec<String> {
-        app.current_list()
-            .unwrap()
-            .tasks
-            .iter()
-            .map(|t| t.title.clone())
-            .collect()
-    };
+    let titles =
+        |app: &App| -> Vec<String> { app.current_list().unwrap().tasks.iter().map(|t| t.title.clone()).collect() };
 
     // Select "b" (middle) and nudge it up: [a, b, c] -> [b, a, c].
     app.select_task_visible(1);
@@ -246,11 +231,7 @@ fn reorder_and_send_task_within_list_persists() {
 
     // The new order round-trips through disk.
     let reloaded = app_in(dir.path());
-    let order: Vec<String> = reloaded.lists[0]
-        .tasks
-        .iter()
-        .map(|t| t.title.clone())
-        .collect();
+    let order: Vec<String> = reloaded.lists[0].tasks.iter().map(|t| t.title.clone()).collect();
     assert_eq!(order, ["b", "a", "c"]);
 }
 
@@ -274,13 +255,7 @@ fn reorder_task_steps_past_hidden_tasks_under_filter() {
     app.select_task_visible(1);
     assert_eq!(app.current_task().unwrap().title, "c");
     app.reorder_task(-1);
-    let raw: Vec<String> = app
-        .current_list()
-        .unwrap()
-        .tasks
-        .iter()
-        .map(|t| t.title.clone())
-        .collect();
+    let raw: Vec<String> = app.current_list().unwrap().tasks.iter().map(|t| t.title.clone()).collect();
     assert_eq!(raw, ["c", "b", "a"]);
     assert_eq!(app.selected_visible_task(), 0);
     assert_eq!(app.current_task().unwrap().title, "c");
@@ -468,14 +443,8 @@ fn copy_payload_builds_title_notes_and_json() {
     app.set_current_tags("errand");
     app.cycle_current_priority(); // -> low
 
-    assert_eq!(
-        app.copy_payload(CopyWhat::Title).unwrap(),
-        "buy milk".to_string()
-    );
-    assert_eq!(
-        app.copy_payload(CopyWhat::Notes).unwrap(),
-        "2% from the corner shop".to_string()
-    );
+    assert_eq!(app.copy_payload(CopyWhat::Title).unwrap(), "buy milk".to_string());
+    assert_eq!(app.copy_payload(CopyWhat::Notes).unwrap(), "2% from the corner shop".to_string());
 
     // JSON carries the whole task and round-trips through serde_json.
     let json = app.copy_payload(CopyWhat::Json).unwrap();
@@ -602,20 +571,14 @@ fn first_run_and_theme_persist_to_config() {
     assert_eq!(app.theme, ThemeKind::TokyoNight);
     app.theme_picker_cancel();
     assert_eq!(app.theme, ThemeKind::Terminal);
-    assert_eq!(
-        config::load_config().unwrap().unwrap().theme,
-        ThemeKind::Terminal
-    );
+    assert_eq!(config::load_config().unwrap().unwrap().theme, ThemeKind::Terminal);
 
     // Confirming applies and persists the highlighted theme.
     app.open_theme_picker();
     app.theme_picker_preview(1);
     app.theme_picker_confirm();
     assert_eq!(app.theme, ThemeKind::TokyoNight);
-    assert_eq!(
-        config::load_config().unwrap().unwrap().theme,
-        ThemeKind::TokyoNight
-    );
+    assert_eq!(config::load_config().unwrap().unwrap().theme, ThemeKind::TokyoNight);
 
     // Relocating moves the lists to a new dir and repoints the config.
     app.add_task("keep me".to_string());
@@ -623,10 +586,7 @@ fn first_run_and_theme_persist_to_config() {
     app.relocate_data(moved.to_str().unwrap());
 
     assert_eq!(app.data_dir, moved);
-    assert!(
-        !target.join("tasks.json").exists(),
-        "old file should be gone"
-    );
+    assert!(!target.join("tasks.json").exists(), "old file should be gone");
     assert!(moved.join("tasks.json").exists(), "new file should exist");
     assert_eq!(app.current_task().unwrap().title, "keep me");
     let saved = config::load_config().unwrap().unwrap();
@@ -687,20 +647,14 @@ fn ctrl_c_always_quits_even_when_rebound() {
     ov.insert("quit".to_string(), vec!["x".to_string()]);
     app.set_keymap(Keymap::from_overrides(ov).0);
 
-    event::handle_key(
-        &mut app,
-        KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL),
-    );
+    event::handle_key(&mut app, KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL));
     assert!(app.should_quit, "Ctrl+C must always quit");
 }
 
 #[test]
 fn config_round_trips_keybindings() {
     let mut kb = Overrides::new();
-    kb.insert(
-        "quit".to_string(),
-        vec!["x".to_string(), "ctrl+q".to_string()],
-    );
+    kb.insert("quit".to_string(), vec!["x".to_string(), "ctrl+q".to_string()]);
     let cfg = config::Config {
         data_dir: PathBuf::from("/tmp/tudo-data"),
         theme: ThemeKind::Dracula,

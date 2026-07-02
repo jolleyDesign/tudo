@@ -52,9 +52,7 @@ pub fn unique_slug(data_dir: &Path, name: &str) -> String {
 pub fn load_lists(data_dir: &Path) -> Result<Vec<List>> {
     let mut lists = Vec::new();
     if data_dir.exists() {
-        for entry in std::fs::read_dir(data_dir)
-            .with_context(|| format!("reading data dir {}", data_dir.display()))?
-        {
+        for entry in std::fs::read_dir(data_dir).with_context(|| format!("reading data dir {}", data_dir.display()))? {
             let entry = entry?;
             let path = entry.path();
             if path.extension().and_then(|e| e.to_str()) != Some("json") {
@@ -64,14 +62,9 @@ pub fn load_lists(data_dir: &Path) -> Result<Vec<List>> {
             if path.file_name().and_then(|n| n.to_str()) == Some(RESERVED) {
                 continue;
             }
-            let data = std::fs::read_to_string(&path)
-                .with_context(|| format!("reading {}", path.display()))?;
-            let mut list: List = serde_json::from_str(&data)
-                .with_context(|| format!("parsing {}", path.display()))?;
-            list.slug = path
-                .file_stem()
-                .map(|s| s.to_string_lossy().into_owned())
-                .unwrap_or_default();
+            let data = std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
+            let mut list: List = serde_json::from_str(&data).with_context(|| format!("parsing {}", path.display()))?;
+            list.slug = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
             lists.push(list);
         }
     }
@@ -80,18 +73,13 @@ pub fn load_lists(data_dir: &Path) -> Result<Vec<List>> {
 }
 
 fn list_path(data_dir: &Path, list: &List) -> std::path::PathBuf {
-    let slug = if list.slug.is_empty() {
-        slugify(&list.name)
-    } else {
-        list.slug.clone()
-    };
+    let slug = if list.slug.is_empty() { slugify(&list.name) } else { list.slug.clone() };
     data_dir.join(format!("{slug}.json"))
 }
 
 /// Save a single list atomically: write to `<slug>.json.tmp` then rename.
 pub fn save_list(data_dir: &Path, list: &List) -> Result<()> {
-    std::fs::create_dir_all(data_dir)
-        .with_context(|| format!("creating data dir {}", data_dir.display()))?;
+    std::fs::create_dir_all(data_dir).with_context(|| format!("creating data dir {}", data_dir.display()))?;
     let path = list_path(data_dir, list);
     let tmp = path.with_extension("json.tmp");
     let json = serde_json::to_string_pretty(list)?;

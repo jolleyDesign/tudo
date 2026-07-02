@@ -41,10 +41,8 @@ pub fn load_config() -> Result<Option<Config>> {
     if !cfg.exists() {
         return Ok(None);
     }
-    let data = std::fs::read_to_string(&cfg)
-        .with_context(|| format!("reading config {}", cfg.display()))?;
-    let config: Config =
-        serde_json::from_str(&data).with_context(|| format!("parsing config {}", cfg.display()))?;
+    let data = std::fs::read_to_string(&cfg).with_context(|| format!("reading config {}", cfg.display()))?;
+    let config: Config = serde_json::from_str(&data).with_context(|| format!("parsing config {}", cfg.display()))?;
     Ok(Some(config))
 }
 
@@ -67,15 +65,11 @@ pub enum Startup {
 pub fn resolve() -> Result<Startup> {
     let saved = load_config()?;
     let saved_theme = saved.as_ref().map(|c| c.theme).unwrap_or_default();
-    let saved_keys = saved
-        .as_ref()
-        .map(|c| c.keybindings.clone())
-        .unwrap_or_default();
+    let saved_keys = saved.as_ref().map(|c| c.keybindings.clone()).unwrap_or_default();
 
     if let Ok(p) = std::env::var("TUDO_DIR") {
         let path = PathBuf::from(p);
-        std::fs::create_dir_all(&path)
-            .with_context(|| format!("creating data dir {}", path.display()))?;
+        std::fs::create_dir_all(&path).with_context(|| format!("creating data dir {}", path.display()))?;
         return Ok(Startup::Open {
             data_dir: path,
             theme: saved_theme,
@@ -101,8 +95,7 @@ pub fn resolve() -> Result<Startup> {
 pub fn save_config(config: &Config) -> Result<()> {
     let cfg = config_path()?;
     if let Some(parent) = cfg.parent() {
-        std::fs::create_dir_all(parent)
-            .with_context(|| format!("creating config dir {}", parent.display()))?;
+        std::fs::create_dir_all(parent).with_context(|| format!("creating config dir {}", parent.display()))?;
     }
     let json = serde_json::to_string_pretty(config)?;
     std::fs::write(&cfg, json).with_context(|| format!("writing config {}", cfg.display()))?;
@@ -114,20 +107,11 @@ pub fn save_config(config: &Config) -> Result<()> {
 pub fn first_run_options() -> Vec<(String, PathBuf)> {
     let mut opts = Vec::new();
     if let Some(home) = dirs::home_dir() {
-        opts.push((
-            "~/.local/share/tudo".to_string(),
-            home.join(".local").join("share").join("tudo"),
-        ));
-        opts.push((
-            "~/.config/tudo".to_string(),
-            home.join(".config").join("tudo"),
-        ));
+        opts.push(("~/.local/share/tudo".to_string(), home.join(".local").join("share").join("tudo")));
+        opts.push(("~/.config/tudo".to_string(), home.join(".config").join("tudo")));
         opts.push(("~/tudo".to_string(), home.join("tudo")));
     }
-    opts.push((
-        "./.tudo (current directory)".to_string(),
-        PathBuf::from(".tudo"),
-    ));
+    opts.push(("./.tudo (current directory)".to_string(), PathBuf::from(".tudo")));
     opts
 }
 

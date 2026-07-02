@@ -49,9 +49,7 @@ impl Theme {
 
     pub fn pane_border(&self, focused: bool) -> Style {
         if focused {
-            Style::default()
-                .fg(self.accent)
-                .add_modifier(Modifier::BOLD)
+            Style::default().fg(self.accent).add_modifier(Modifier::BOLD)
         } else {
             Style::default().fg(self.muted)
         }
@@ -133,9 +131,7 @@ impl ThemeKind {
             "one-dark" | "onedark" | "one" => Some(ThemeKind::OneDark),
             "rose-pine" | "rosepine" | "rose" => Some(ThemeKind::RosePine),
             "gotham" => Some(ThemeKind::Gotham),
-            "black-white" | "black-and-white" | "bw" | "mono" | "monochrome" => {
-                Some(ThemeKind::BlackWhite)
-            }
+            "black-white" | "black-and-white" | "bw" | "mono" | "monochrome" => Some(ThemeKind::BlackWhite),
             "terminal" | "none" | "system" | "default" | "ansi" => Some(ThemeKind::Terminal),
             _ => None,
         }

@@ -151,20 +151,16 @@ impl Action {
         match self {
             Action::ToggleFocus => vec![c(KeyCode::Tab)],
             Action::FocusLists => vec![c(KeyCode::Char('h')), c(KeyCode::Left)],
-            Action::FocusTasks => vec![c(KeyCode::Char('l')), c(KeyCode::Right)],
+            Action::FocusTasks => {
+                vec![c(KeyCode::Char('l')), c(KeyCode::Right)]
+            },
             Action::MoveDown => vec![c(KeyCode::Char('j')), c(KeyCode::Down)],
             Action::MoveUp => vec![c(KeyCode::Char('k')), c(KeyCode::Up)],
             Action::Activate => vec![c(KeyCode::Enter)],
             Action::Back => vec![c(KeyCode::Esc)],
             Action::ToggleDone => vec![c(KeyCode::Char(' '))],
-            Action::ReorderDown => vec![
-                c(KeyCode::Char('J')),
-                KeyChord::new(KeyCode::Down, KeyModifiers::SHIFT),
-            ],
-            Action::ReorderUp => vec![
-                c(KeyCode::Char('K')),
-                KeyChord::new(KeyCode::Up, KeyModifiers::SHIFT),
-            ],
+            Action::ReorderDown => vec![c(KeyCode::Char('J')), KeyChord::new(KeyCode::Down, KeyModifiers::SHIFT)],
+            Action::ReorderUp => vec![c(KeyCode::Char('K')), KeyChord::new(KeyCode::Up, KeyModifiers::SHIFT)],
             Action::SendTop => vec![c(KeyCode::Char('g'))],
             Action::SendBottom => vec![c(KeyCode::Char('G'))],
             Action::MoveTask => vec![c(KeyCode::Char('m'))],
@@ -310,7 +306,7 @@ fn parse_code(s: &str) -> Option<KeyCode> {
                 return None; // unrecognized multi-character key name
             }
             KeyCode::Char(c)
-        }
+        },
     })
 }
 
@@ -462,9 +458,7 @@ impl Keymap {
     /// Whether the raw overrides already list every known action — i.e. the
     /// config on disk is complete and needs no filling in.
     pub fn covers_all_actions(&self) -> bool {
-        Action::ALL
-            .iter()
-            .all(|a| self.overrides.contains_key(a.config_name()))
+        Action::ALL.iter().all(|a| self.overrides.contains_key(a.config_name()))
     }
 
     /// The complete binding set as config overrides: every action mapped to its
@@ -474,11 +468,7 @@ impl Keymap {
     pub fn to_full_overrides(&self) -> Overrides {
         let mut out = self.overrides.clone();
         for action in Action::ALL {
-            let tokens = self
-                .chords_for(action)
-                .iter()
-                .map(|c| c.config_token())
-                .collect();
+            let tokens = self.chords_for(action).iter().map(|c| c.config_token()).collect();
             out.insert(action.config_name().to_string(), tokens);
         }
         out
@@ -491,33 +481,15 @@ mod tests {
 
     #[test]
     fn parses_plain_named_and_modified_keys() {
-        assert_eq!(
-            KeyChord::parse("j"),
-            Some(KeyChord::plain(KeyCode::Char('j')))
-        );
+        assert_eq!(KeyChord::parse("j"), Some(KeyChord::plain(KeyCode::Char('j'))));
         // Case is preserved for letters.
-        assert_eq!(
-            KeyChord::parse("J"),
-            Some(KeyChord::plain(KeyCode::Char('J')))
-        );
-        assert_eq!(
-            KeyChord::parse("space"),
-            Some(KeyChord::plain(KeyCode::Char(' ')))
-        );
+        assert_eq!(KeyChord::parse("J"), Some(KeyChord::plain(KeyCode::Char('J'))));
+        assert_eq!(KeyChord::parse("space"), Some(KeyChord::plain(KeyCode::Char(' '))));
         assert_eq!(KeyChord::parse("tab"), Some(KeyChord::plain(KeyCode::Tab)));
         // A lone symbol is taken literally.
-        assert_eq!(
-            KeyChord::parse("/"),
-            Some(KeyChord::plain(KeyCode::Char('/')))
-        );
-        assert_eq!(
-            KeyChord::parse("ctrl+c"),
-            Some(KeyChord::new(KeyCode::Char('c'), KeyModifiers::CONTROL))
-        );
-        assert_eq!(
-            KeyChord::parse("shift+down"),
-            Some(KeyChord::new(KeyCode::Down, KeyModifiers::SHIFT))
-        );
+        assert_eq!(KeyChord::parse("/"), Some(KeyChord::plain(KeyCode::Char('/'))));
+        assert_eq!(KeyChord::parse("ctrl+c"), Some(KeyChord::new(KeyCode::Char('c'), KeyModifiers::CONTROL)));
+        assert_eq!(KeyChord::parse("shift+down"), Some(KeyChord::new(KeyCode::Down, KeyModifiers::SHIFT)));
         assert_eq!(KeyChord::parse("nope-key"), None);
         assert_eq!(KeyChord::parse("bad+j"), None);
     }
@@ -536,22 +508,10 @@ mod tests {
     #[test]
     fn default_map_resolves_builtin_keys() {
         let km = Keymap::default();
-        assert_eq!(
-            km.action_for(KeyEvent::from(KeyCode::Char('j'))),
-            Some(Action::MoveDown)
-        );
-        assert_eq!(
-            km.action_for(KeyEvent::from(KeyCode::Down)),
-            Some(Action::MoveDown)
-        );
-        assert_eq!(
-            km.action_for(KeyEvent::new(KeyCode::Down, KeyModifiers::SHIFT)),
-            Some(Action::ReorderDown)
-        );
-        assert_eq!(
-            km.action_for(KeyEvent::from(KeyCode::Char('q'))),
-            Some(Action::Quit)
-        );
+        assert_eq!(km.action_for(KeyEvent::from(KeyCode::Char('j'))), Some(Action::MoveDown));
+        assert_eq!(km.action_for(KeyEvent::from(KeyCode::Down)), Some(Action::MoveDown));
+        assert_eq!(km.action_for(KeyEvent::new(KeyCode::Down, KeyModifiers::SHIFT)), Some(Action::ReorderDown));
+        assert_eq!(km.action_for(KeyEvent::from(KeyCode::Char('q'))), Some(Action::Quit));
         // An unbound key resolves to nothing.
         assert_eq!(km.action_for(KeyEvent::from(KeyCode::Char('z'))), None);
     }
@@ -567,21 +527,12 @@ mod tests {
 
         // 'q' no longer quits; ctrl+q does.
         assert_eq!(km.action_for(KeyEvent::from(KeyCode::Char('q'))), None);
-        assert_eq!(
-            km.action_for(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::CONTROL)),
-            Some(Action::Quit)
-        );
+        assert_eq!(km.action_for(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::CONTROL)), Some(Action::Quit));
         // 'j' no longer moves down (its defaults were replaced), 'x' does.
         assert_eq!(km.action_for(KeyEvent::from(KeyCode::Char('j'))), None);
-        assert_eq!(
-            km.action_for(KeyEvent::from(KeyCode::Char('x'))),
-            Some(Action::MoveDown)
-        );
+        assert_eq!(km.action_for(KeyEvent::from(KeyCode::Char('x'))), Some(Action::MoveDown));
         // Untouched actions keep their defaults.
-        assert_eq!(
-            km.action_for(KeyEvent::from(KeyCode::Char('a'))),
-            Some(Action::AddTask)
-        );
+        assert_eq!(km.action_for(KeyEvent::from(KeyCode::Char('a'))), Some(Action::AddTask));
     }
 
     #[test]
@@ -598,17 +549,7 @@ mod tests {
 
     #[test]
     fn config_tokens_round_trip_through_parse() {
-        for token in [
-            "j",
-            "J",
-            "space",
-            "tab",
-            "enter",
-            "esc",
-            "/",
-            "ctrl+c",
-            "shift+down",
-        ] {
+        for token in ["j", "J", "space", "tab", "enter", "esc", "/", "ctrl+c", "shift+down"] {
             let chord = KeyChord::parse(token).expect("parses");
             // The canonical token re-parses to the same chord.
             let reparsed = KeyChord::parse(&chord.config_token()).expect("re-parses");
@@ -621,25 +562,15 @@ mod tests {
         let full = Keymap::default().to_full_overrides();
         // Every action is present.
         for action in Action::ALL {
-            assert!(
-                full.contains_key(action.config_name()),
-                "missing {}",
-                action.config_name()
-            );
+            assert!(full.contains_key(action.config_name()), "missing {}", action.config_name());
         }
         // Rebuilding from the full set is warning-free, complete, and behaves
         // exactly like the defaults.
         let (km, warnings) = Keymap::from_overrides(full);
         assert!(warnings.is_empty(), "warnings: {warnings:?}");
         assert!(km.covers_all_actions());
-        assert_eq!(
-            km.action_for(KeyEvent::from(KeyCode::Char('j'))),
-            Some(Action::MoveDown)
-        );
-        assert_eq!(
-            km.action_for(KeyEvent::new(KeyCode::Down, KeyModifiers::SHIFT)),
-            Some(Action::ReorderDown)
-        );
+        assert_eq!(km.action_for(KeyEvent::from(KeyCode::Char('j'))), Some(Action::MoveDown));
+        assert_eq!(km.action_for(KeyEvent::new(KeyCode::Down, KeyModifiers::SHIFT)), Some(Action::ReorderDown));
     }
 
     #[test]
@@ -654,10 +585,7 @@ mod tests {
         // The user's override is kept, missing actions are filled with defaults,
         // and the unrecognized entry is preserved untouched.
         assert_eq!(full.get("quit").unwrap(), &vec!["Q".to_string()]);
-        assert_eq!(
-            full.get("move-down").unwrap(),
-            &vec!["j".to_string(), "down".to_string()]
-        );
+        assert_eq!(full.get("move-down").unwrap(), &vec!["j".to_string(), "down".to_string()]);
         assert_eq!(full.get("future-action").unwrap(), &vec!["z".to_string()]);
     }
 }

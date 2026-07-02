@@ -181,7 +181,7 @@ pub fn parse_due(input: &str, today: NaiveDate) -> anyhow::Result<Option<NaiveDa
         rest if rest.starts_with('+') => {
             let n: u64 = rest[1..].trim().parse()?;
             today + Days::new(n)
-        }
+        },
         rest => NaiveDate::parse_from_str(rest, "%Y-%m-%d")?,
     };
     Ok(Some(date))
