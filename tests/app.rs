@@ -506,6 +506,34 @@ fn d_on_a_focused_list_neither_deletes_it_nor_archives_a_task() {
 }
 
 #[test]
+fn task_keys_are_inert_while_the_lists_pane_is_focused() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app_in(dir.path());
+    app.add_list("Work".to_string());
+    app.add_task("keep me".to_string());
+
+    // Focus the Lists pane; a task stays selected in the tasks pane underneath.
+    app.select_list_index(0);
+
+    // Space (toggle-done) and `p` (cycle-priority) must not reach that task.
+    event::handle_key(&mut app, KeyEvent::from(KeyCode::Char(' ')));
+    event::handle_key(&mut app, KeyEvent::from(KeyCode::Char('p')));
+    let task = app.current_task().unwrap();
+    assert!(!task.done, "space toggled the task despite the lists pane focus");
+    assert!(
+        task.priority.is_none(),
+        "`p` changed the task priority despite the lists pane focus"
+    );
+    // No task-editing overlay opened either (e.g. due/tags/notes).
+    assert!(matches!(app.mode, Mode::Normal));
+
+    // Focusing the tasks pane restores the behaviour.
+    app.focus_tasks();
+    event::handle_key(&mut app, KeyEvent::from(KeyCode::Char(' ')));
+    assert!(app.current_task().unwrap().done);
+}
+
+#[test]
 fn d_on_a_selected_subtask_does_not_delete_it() {
     let dir = tempfile::tempdir().unwrap();
     let mut app = app_in(dir.path());

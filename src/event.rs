@@ -4,7 +4,7 @@ use ratatui::crossterm::event::{
     KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
 
-use crate::app::{App, ConfirmAction, CopyWhat, InputField, Mode};
+use crate::app::{App, ConfirmAction, CopyWhat, Focus, InputField, Mode};
 use crate::config;
 use crate::keybind::Action;
 
@@ -97,6 +97,12 @@ fn nav_key(app: &mut App, key: KeyEvent) {
 /// Run the (mode-aware) handler for a bound [`Action`] in Normal / Detail mode.
 fn dispatch(app: &mut App, action: Action) {
     let detail = matches!(app.mode, Mode::Detail);
+    // Task-scoped actions must not reach into the tasks pane while the lists
+    // pane is focused (outside a task's detail view). Otherwise e.g. Space would
+    // tick off the highlighted task even though the cursor is on the lists pane.
+    if !detail && app.focus == Focus::Lists && is_task_action(action) {
+        return;
+    }
     match action {
         Action::Quit => app.should_quit = true,
         Action::Help => app.mode = Mode::Help,
@@ -138,6 +144,26 @@ fn dispatch(app: &mut App, action: Action) {
         Action::ThemePicker => app.open_theme_picker(),
         Action::Settings => app.open_settings(),
     }
+}
+
+/// Actions that operate on the selected task and so are inert while the lists
+/// pane is focused. Dual-purpose actions (Edit/Delete/Archive rename or remove
+/// the list instead) and pane-agnostic ones (navigation, AddTask, AddList,
+/// Search, filters, overlays) are deliberately absent.
+fn is_task_action(action: Action) -> bool {
+    matches!(
+        action,
+        Action::ToggleDone
+            | Action::CyclePriority
+            | Action::SetDue
+            | Action::SetTags
+            | Action::SetNotes
+            | Action::AddSubtask
+            | Action::MoveTask
+            | Action::Copy
+            | Action::SendTop
+            | Action::SendBottom
+    )
 }
 
 fn input_key(app: &mut App, key: KeyEvent) {
