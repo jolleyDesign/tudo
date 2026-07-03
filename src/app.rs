@@ -1025,13 +1025,18 @@ impl App {
         self.set_status(format!("archived \"{title}\""));
     }
 
-    /// The `d` key: archive the selected task, but fall back to permanent delete
-    /// (with confirm) for a list or subtask, which have no archive.
-    pub fn delete_or_archive(&mut self) {
-        let deleting_subtask = self.in_detail() && self.selected_subtask().is_some();
-        let deleting_list = !self.in_detail() && self.focus == Focus::Lists;
-        if deleting_subtask || deleting_list {
-            self.start_delete();
+    /// The `d` key: archive the selected task. Only tasks can be archived, so a
+    /// list or subtask is deliberately *not* touched here — `d` only ever
+    /// archives, never deletes, so it can't mean "delete" in one pane and
+    /// "archive" in another. `X` is the single key that deletes anything (task,
+    /// list, or subtask); both cases below point the user at it.
+    pub fn archive_selection(&mut self) {
+        let on_subtask = self.in_detail() && self.selected_subtask().is_some();
+        let on_list = !self.in_detail() && self.focus == Focus::Lists;
+        if on_subtask {
+            self.set_status("subtasks can't be archived — X deletes a subtask".to_string());
+        } else if on_list {
+            self.set_status("lists can't be archived — X deletes a list".to_string());
         } else {
             self.archive_current_task();
         }

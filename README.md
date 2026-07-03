@@ -124,7 +124,7 @@ Press `?` in the app for the same list grouped into an overlay. All of these key
 
 | Key | Action |
 |-----|--------|
-| `d` | archive the selected task; delete a list or subtask (asks to confirm) |
+| `d` | archive the selected task |
 | `X` | permanently delete the selected task/list/subtask (asks to confirm) |
 
 **Find & app**
@@ -199,7 +199,7 @@ tudo writes a full `keybindings` block into your `config.json` (on first run, an
 | `set-due` | `D` | set or clear the due date |
 | `set-tags` | `t` | edit tags |
 | `set-notes` | `n` | edit notes |
-| `archive` | `d` | archive the task; delete a list or subtask |
+| `archive` | `d` | archive the selected task |
 | `delete` | `X` | permanently delete (asks to confirm) |
 | `search` | `/` | search titles, tags, and notes |
 | `cycle-filter` | `f` | cycle the status filter (all / active / done) |

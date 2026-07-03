@@ -122,7 +122,7 @@ fn dispatch(app: &mut App, action: Action) {
         Action::AddTask => app.start_add_task(),
         Action::AddList => app.start_add_list(),
         Action::Edit => app.start_edit(),
-        Action::Archive => app.delete_or_archive(),
+        Action::Archive => app.archive_selection(),
         Action::Delete => app.start_delete(),
         Action::CyclePriority => app.cycle_current_priority(),
         Action::SetDue => app.start_set_due(),

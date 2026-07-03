@@ -345,7 +345,7 @@ fn reorder_list_leaves_archive_pinned_last() {
     app.select_list_index(0); // Work
     app.focus_tasks();
     app.add_task("t".to_string());
-    app.delete_or_archive();
+    app.archive_selection();
     assert!(app.lists.last().unwrap().is_archive());
     let before: Vec<String> = app.lists.iter().map(|l| l.name.clone()).collect();
 
@@ -377,7 +377,7 @@ fn archive_is_created_lazily_and_pinned_last() {
     // Archiving a task creates the Archived list, pinned after user lists
     // despite its name sorting early.
     app.add_task("t".to_string());
-    app.delete_or_archive(); // `d` on a task archives it
+    app.archive_selection(); // `d` on a task archives it
     let names: Vec<String> = app.lists.iter().map(|l| l.name.clone()).collect();
     assert_eq!(names.last().unwrap(), "Archived");
     assert_eq!(app.lists.iter().filter(|l| l.is_archive()).count(), 1);
@@ -392,7 +392,7 @@ fn archive_moves_task_and_persists() {
     app.add_task("later".to_string());
     app.select_task_visible(0); // "do it"
 
-    app.delete_or_archive();
+    app.archive_selection();
 
     let work = app.lists.iter().find(|l| l.name == "Work").unwrap();
     assert_eq!(work.tasks.len(), 1);
@@ -417,17 +417,57 @@ fn archiving_an_already_archived_task_is_a_noop_hint() {
     let mut app = app_in(dir.path());
     app.add_list("Work".to_string());
     app.add_task("t".to_string());
-    app.delete_or_archive();
+    app.archive_selection();
 
     let ai = app.lists.iter().position(|l| l.is_archive()).unwrap();
     app.select_list_index(ai);
     app.focus_tasks();
     app.select_task_visible(0);
-    app.delete_or_archive(); // no-op on an already-archived task
+    app.archive_selection(); // no-op on an already-archived task
 
     assert!(!app.status.is_empty());
     let arch = app.lists.iter().find(|l| l.is_archive()).unwrap();
     assert_eq!(arch.tasks.len(), 1);
+}
+
+#[test]
+fn d_on_a_focused_list_neither_deletes_it_nor_archives_a_task() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app_in(dir.path());
+    app.add_list("Work".to_string());
+    app.add_task("keep me".to_string());
+
+    // Focus the Lists pane (a task stays selected underneath) and press `d`.
+    app.select_list_index(0);
+    app.archive_selection();
+
+    // The list isn't deleted and no confirm prompt opens...
+    assert!(matches!(app.mode, Mode::Normal));
+    assert_eq!(app.lists.len(), 1);
+    assert_eq!(app.current_list().unwrap().name, "Work");
+    // ...and the underlying task isn't archived (no Archived list appears).
+    assert!(!app.lists.iter().any(|l| l.is_archive()));
+    assert_eq!(app.current_list().unwrap().tasks.len(), 1);
+    // A hint points the user at the explicit delete key instead.
+    assert!(!app.status.is_empty());
+}
+
+#[test]
+fn d_on_a_selected_subtask_does_not_delete_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app_in(dir.path());
+    app.add_list("Work".to_string());
+    app.add_task("parent".to_string());
+    app.add_subtask("child".to_string());
+
+    // Open the detail view with the subtask selected, then press `d`.
+    app.open_detail();
+    app.archive_selection();
+
+    // The subtask survives (X is the only way to delete it) and a hint is set.
+    assert!(matches!(app.mode, Mode::Detail));
+    assert_eq!(app.current_task().unwrap().subtasks.len(), 1);
+    assert!(!app.status.is_empty());
 }
 
 #[test]
@@ -436,7 +476,7 @@ fn unarchive_via_move_and_archive_hidden_from_targets() {
     let mut app = app_in(dir.path());
     app.add_list("Work".to_string());
     app.add_task("t".to_string());
-    app.delete_or_archive();
+    app.archive_selection();
 
     // From a user list, the Archived list is not offered as a move target.
     let wi = app.lists.iter().position(|l| l.name == "Work").unwrap();
@@ -468,7 +508,7 @@ fn archived_list_is_protected_from_rename_and_delete() {
     let mut app = app_in(dir.path());
     app.add_list("Work".to_string());
     app.add_task("t".to_string());
-    app.delete_or_archive();
+    app.archive_selection();
 
     let ai = app.lists.iter().position(|l| l.is_archive()).unwrap();
     app.select_list_index(ai); // focuses the Lists pane
@@ -488,7 +528,7 @@ fn permanent_delete_removes_an_archived_task() {
     let mut app = app_in(dir.path());
     app.add_list("Work".to_string());
     app.add_task("t".to_string());
-    app.delete_or_archive();
+    app.archive_selection();
 
     let ai = app.lists.iter().position(|l| l.is_archive()).unwrap();
     app.select_list_index(ai);
