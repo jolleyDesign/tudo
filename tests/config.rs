@@ -36,6 +36,8 @@ fn keybindings_load_from_disk_and_materialize_the_full_set() {
         loaded.keybindings.get("quit").unwrap(),
         &vec!["Q".to_string()]
     );
+    // A config written before this option existed loads with it defaulted off.
+    assert!(!loaded.completed_to_bottom);
 
     // The loaded overrides build a working keymap: 'Q' quits, plain 'q' doesn't.
     let (km, warnings) = Keymap::from_overrides(loaded.keybindings);
@@ -58,6 +60,8 @@ fn keybindings_load_from_disk_and_materialize_the_full_set() {
     let mut app = App::new(Some(data_dir)).unwrap();
     app.set_theme(loaded.theme);
     app.set_keymap(km);
+    // Flip the completed-to-bottom preference so we can confirm it persists.
+    app.toggle_completed_to_bottom();
     app.materialize_keybindings();
 
     // The config on disk now lists every action, keeps the user's override, and
@@ -66,6 +70,10 @@ fn keybindings_load_from_disk_and_materialize_the_full_set() {
     unsafe { std::env::remove_var("TUDO_CONFIG") };
 
     assert_eq!(refreshed.theme, tudo::theme::ThemeKind::Dracula);
+    assert!(
+        refreshed.completed_to_bottom,
+        "the toggled preference should persist to disk"
+    );
     assert_eq!(
         refreshed.keybindings.get("quit").unwrap(),
         &vec!["Q".to_string()]

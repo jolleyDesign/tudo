@@ -30,13 +30,18 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
-    let (data_dir, mut theme, keybindings) = match config::resolve()? {
+    let (data_dir, mut theme, keybindings, completed_to_bottom) = match config::resolve()? {
         Startup::Open {
             data_dir,
             theme,
             keybindings,
-        } => (Some(data_dir), theme, keybindings),
-        Startup::FirstRun { theme, keybindings } => (None, theme, keybindings),
+            completed_to_bottom,
+        } => (Some(data_dir), theme, keybindings, completed_to_bottom),
+        Startup::FirstRun {
+            theme,
+            keybindings,
+            completed_to_bottom,
+        } => (None, theme, keybindings, completed_to_bottom),
     };
     // $TUDO_THEME overrides the saved theme for this run.
     if let Some(kind) = std::env::var("TUDO_THEME")
@@ -49,6 +54,7 @@ fn main() -> Result<()> {
     let mut app = App::new(data_dir)?;
     app.set_theme(theme);
     app.set_keymap(keymap);
+    app.set_completed_to_bottom(completed_to_bottom);
     // Write the full set of keybindings into an existing config so the user can
     // see and edit them all. Skipped under $TUDO_DIR (ephemeral / no config to
     // grow) so those runs don't create or repoint the saved config.

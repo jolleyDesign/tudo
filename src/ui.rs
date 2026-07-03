@@ -888,7 +888,7 @@ fn render_sort_picker(f: &mut Frame, app: &App) {
 }
 
 fn render_settings(f: &mut Frame, app: &App) {
-    let area = centered_rect(f.area(), 76, 17);
+    let area = centered_rect(f.area(), 76, 19);
     overlay_clear(f, area);
     let block = overlay_block("Settings", theme::accent());
     let inner = block.inner(area);
@@ -908,6 +908,17 @@ fn render_settings(f: &mut Frame, app: &App) {
             value("JSON — one file per list, plus config.json".to_string()),
         ]),
         Line::from(vec![label("Theme"), value(app.theme.name().to_string())]),
+        Line::from(vec![
+            label("Completed"),
+            value(
+                if app.completed_to_bottom {
+                    "sink to bottom of list"
+                } else {
+                    "stay in place"
+                }
+                .to_string(),
+            ),
+        ]),
         Line::from(vec![
             label("Contents"),
             value(format!(
@@ -955,6 +966,18 @@ fn render_settings(f: &mut Frame, app: &App) {
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled("  open the theme picker", Style::default().fg(theme::fg())),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled(
+            "c",
+            Style::default()
+                .fg(theme::accent())
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            "  toggle sinking completed tasks to the bottom",
+            Style::default().fg(theme::fg()),
+        ),
     ]));
     lines.push(Line::raw(""));
     lines.push(Line::from(Span::styled(

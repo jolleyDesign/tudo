@@ -337,6 +337,10 @@ pub struct App {
     pub filter: Filter,
     /// How the visible task list is ordered (session-only; see [`Sort`]).
     pub sort: Sort,
+    /// When set, completed tasks are shown at the bottom of the list regardless
+    /// of the active [`Sort`]. Display-only (the stored order is untouched) and
+    /// persisted in the config, unlike the session-only `sort`.
+    pub completed_to_bottom: bool,
     pub theme: ThemeKind,
     /// The resolved keybindings (built-in defaults plus any config overrides).
     pub keymap: Keymap,
@@ -376,6 +380,7 @@ impl App {
             subtask_state: ListState::default(),
             filter: Filter::default(),
             sort: Sort::default(),
+            completed_to_bottom: false,
             theme,
             keymap: Keymap::default(),
             status: String::new(),
@@ -406,6 +411,26 @@ impl App {
     /// Install the resolved keybindings (used at startup, after config load).
     pub fn set_keymap(&mut self, keymap: Keymap) {
         self.keymap = keymap;
+    }
+
+    /// Set the "completed tasks sink to the bottom" preference without
+    /// persisting (used at startup, after config load).
+    pub fn set_completed_to_bottom(&mut self, on: bool) {
+        self.completed_to_bottom = on;
+    }
+
+    /// Flip the "completed tasks sink to the bottom" preference and persist it.
+    /// Reversible: turning it off restores the stored order, since the setting
+    /// only affects display (see [`App::visible_task_indices`]).
+    pub fn toggle_completed_to_bottom(&mut self) {
+        self.completed_to_bottom = !self.completed_to_bottom;
+        self.persist_config();
+        let state = if self.completed_to_bottom {
+            "on"
+        } else {
+            "off"
+        };
+        self.set_status(format!("completed tasks to bottom: {state}"));
     }
 
     /// Fill an existing config file in with every keybinding (defaults plus any
@@ -536,6 +561,7 @@ impl App {
             data_dir: self.data_dir.clone(),
             theme: self.theme,
             keybindings: self.keymap.to_full_overrides(),
+            completed_to_bottom: self.completed_to_bottom,
         };
         if let Err(e) = config::save_config(&config) {
             self.set_status(format!("theme set for this session only: {e}"));
@@ -614,6 +640,12 @@ impl App {
             .collect();
         if self.sort != Sort::Manual {
             indices.sort_by(|&a, &b| self.sort.compare(&list.tasks[a], &list.tasks[b]));
+        }
+        // Optionally float completed tasks to the bottom. `sort_by_key` is
+        // stable and `false < true`, so not-done tasks keep their (sorted)
+        // position and done ones trail them in their existing relative order.
+        if self.completed_to_bottom {
+            indices.sort_by_key(|&i| list.tasks[i].done);
         }
         indices
     }
@@ -1685,6 +1717,7 @@ impl App {
             data_dir: dir.clone(),
             theme: self.theme,
             keybindings: self.keymap.to_full_overrides(),
+            completed_to_bottom: self.completed_to_bottom,
         };
         if let Err(e) = config::save_config(&config) {
             self.set_status(format!("could not save config: {e}"));

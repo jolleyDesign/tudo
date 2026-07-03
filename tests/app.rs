@@ -99,6 +99,59 @@ fn toggle_done_sets_and_clears_completion() {
 }
 
 #[test]
+fn completed_to_bottom_sinks_done_tasks_without_touching_stored_order() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app_in(dir.path());
+    app.add_list("L".to_string());
+    app.add_task("a".to_string());
+    app.add_task("b".to_string());
+    app.add_task("c".to_string());
+    app.add_task("d".to_string());
+
+    // Titles in current *display* order.
+    let visible_titles = |app: &App| -> Vec<String> {
+        let list = app.current_list().unwrap();
+        app.visible_task_indices()
+            .iter()
+            .map(|&i| list.tasks[i].title.clone())
+            .collect()
+    };
+    // Titles in *stored* order (what lands on disk).
+    let stored_titles = |app: &App| -> Vec<String> {
+        app.current_list()
+            .unwrap()
+            .tasks
+            .iter()
+            .map(|t| t.title.clone())
+            .collect()
+    };
+
+    // Mark "b" and "d" done.
+    app.select_task_visible(1);
+    app.toggle_current_done();
+    app.select_task_visible(3);
+    app.toggle_current_done();
+
+    // Off (default): display order matches stored order.
+    assert_eq!(visible_titles(&app), ["a", "b", "c", "d"]);
+
+    // On: done tasks sink, each group keeping its relative order.
+    app.set_completed_to_bottom(true);
+    assert_eq!(visible_titles(&app), ["a", "c", "b", "d"]);
+    // Stored order is untouched — the change is display-only.
+    assert_eq!(stored_titles(&app), ["a", "b", "c", "d"]);
+
+    // It composes with an active sort (alphabetical here still sinks the done).
+    app.set_sort(Sort::Alphabetical);
+    assert_eq!(visible_titles(&app), ["a", "c", "b", "d"]);
+    app.set_sort(Sort::Manual);
+
+    // Turning it back off restores the original order (fully reversible).
+    app.set_completed_to_bottom(false);
+    assert_eq!(visible_titles(&app), ["a", "b", "c", "d"]);
+}
+
+#[test]
 fn cycle_priority_walks_through_all_levels() {
     let dir = tempfile::tempdir().unwrap();
     let mut app = app_in(dir.path());
@@ -824,21 +877,26 @@ fn config_round_trips_keybindings() {
         data_dir: PathBuf::from("/tmp/tudo-data"),
         theme: ThemeKind::Dracula,
         keybindings: kb.clone(),
+        completed_to_bottom: true,
     };
     let json = serde_json::to_string_pretty(&cfg).unwrap();
     assert!(json.contains("keybindings"), "keybindings missing: {json}");
     let back: config::Config = serde_json::from_str(&json).unwrap();
     assert_eq!(back.keybindings, kb);
+    assert!(back.completed_to_bottom);
 
-    // An older/minimal config with no keybindings still loads (defaults empty).
+    // An older/minimal config with no keybindings still loads (defaults empty),
+    // and the completed-to-bottom option defaults off.
     let minimal = r#"{"data_dir":"/tmp/x","theme":"nord"}"#;
     let parsed: config::Config = serde_json::from_str(minimal).unwrap();
     assert!(parsed.keybindings.is_empty());
+    assert!(!parsed.completed_to_bottom);
     // And a default config omits the field entirely to stay minimal on disk.
     let empty = config::Config {
         data_dir: PathBuf::from("/tmp/x"),
         theme: ThemeKind::Terminal,
         keybindings: Overrides::new(),
+        completed_to_bottom: false,
     };
     let json = serde_json::to_string(&empty).unwrap();
     assert!(!json.contains("keybindings"), "empty map should be omitted");

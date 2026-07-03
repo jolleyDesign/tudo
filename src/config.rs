@@ -21,6 +21,11 @@ pub struct Config {
     /// empty so a default install's config stays minimal.
     #[serde(default, skip_serializing_if = "Overrides::is_empty")]
     pub keybindings: Overrides,
+    /// When true, completed tasks sink to the bottom of each list. This is a
+    /// display-only reordering — the stored task order is untouched, so turning
+    /// it back off restores the original order. Off by default.
+    #[serde(default)]
+    pub completed_to_bottom: bool,
 }
 
 /// Location of the config pointer file.
@@ -56,10 +61,12 @@ pub enum Startup {
         data_dir: PathBuf,
         theme: ThemeKind,
         keybindings: Overrides,
+        completed_to_bottom: bool,
     },
     FirstRun {
         theme: ThemeKind,
         keybindings: Overrides,
+        completed_to_bottom: bool,
     },
 }
 
@@ -71,6 +78,10 @@ pub fn resolve() -> Result<Startup> {
         .as_ref()
         .map(|c| c.keybindings.clone())
         .unwrap_or_default();
+    let saved_sink = saved
+        .as_ref()
+        .map(|c| c.completed_to_bottom)
+        .unwrap_or(false);
 
     if let Ok(p) = std::env::var("TUDO_DIR") {
         let path = PathBuf::from(p);
@@ -80,6 +91,7 @@ pub fn resolve() -> Result<Startup> {
             data_dir: path,
             theme: saved_theme,
             keybindings: saved_keys,
+            completed_to_bottom: saved_sink,
         });
     }
     if let Some(config) = saved {
@@ -89,11 +101,13 @@ pub fn resolve() -> Result<Startup> {
             data_dir: config.data_dir,
             theme: config.theme,
             keybindings: config.keybindings,
+            completed_to_bottom: config.completed_to_bottom,
         });
     }
     Ok(Startup::FirstRun {
         theme: saved_theme,
         keybindings: saved_keys,
+        completed_to_bottom: saved_sink,
     })
 }
 

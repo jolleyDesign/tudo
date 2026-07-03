@@ -152,6 +152,13 @@ fn settings_panel_shows_paths_and_format() {
     assert!(text.contains("Config file"), "config label missing");
     assert!(text.contains("JSON"), "format note missing");
     assert!(text.contains("1 lists"), "contents count missing");
+    // The completed-to-bottom preference and its toggle key are shown.
+    assert!(text.contains("Completed"), "completed label missing");
+    assert!(text.contains("stay in place"), "completed state missing");
+    assert!(
+        text.contains("toggle sinking completed tasks"),
+        "completed toggle hint missing"
+    );
 }
 
 #[test]

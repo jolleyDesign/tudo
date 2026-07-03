@@ -38,6 +38,7 @@ fn settings_key(app: &mut App, key: KeyEvent) {
     match key.code {
         KeyCode::Char('d') => app.start_change_data_dir(),
         KeyCode::Char('t') | KeyCode::Char('T') => app.open_theme_picker(),
+        KeyCode::Char('c') | KeyCode::Char('C') => app.toggle_completed_to_bottom(),
         KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('S') => app.close_overlay(),
         _ => {}
     }
