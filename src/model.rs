@@ -144,6 +144,12 @@ pub struct List {
     pub name: String,
     #[serde(default)]
     pub tasks: Vec<Task>,
+    /// Explicit position in the sidebar. `None` means "unordered" and sorts
+    /// alphabetically after any explicitly-ordered lists; a fresh install (and
+    /// any list never touched by reordering) leaves this out of the JSON, so
+    /// list files stay unchanged until the user actually reorders.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub order: Option<u32>,
     #[serde(skip)]
     pub slug: String,
 }
@@ -153,6 +159,7 @@ impl List {
         Self {
             name: name.into(),
             tasks: Vec::new(),
+            order: None,
             slug: String::new(),
         }
     }

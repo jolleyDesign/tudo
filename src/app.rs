@@ -910,15 +910,46 @@ impl App {
         self.lists.iter().position(|l| l.is_archive())
     }
 
-    /// Sort user lists by name (case-insensitive) and pin the Archived list to
-    /// the bottom. A no-op ordering-wise when no archive exists.
+    /// Order the sidebar: the Archived list is always pinned to the bottom;
+    /// the rest are sorted by their explicit `order`, with any unordered lists
+    /// (a fresh install, or a list just created after a custom order exists)
+    /// falling back to alphabetical after the ordered ones. With no custom
+    /// order anywhere this is pure alphabetical, matching the original behaviour.
     fn sort_lists(&mut self) {
         self.lists
             .sort_by(|a, b| match (a.is_archive(), b.is_archive()) {
                 (true, false) => std::cmp::Ordering::Greater,
                 (false, true) => std::cmp::Ordering::Less,
-                _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
+                _ => a
+                    .order
+                    .unwrap_or(u32::MAX)
+                    .cmp(&b.order.unwrap_or(u32::MAX))
+                    .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase())),
             });
+    }
+
+    /// Give every non-archive list an explicit `order` matching its current
+    /// position and persist those whose stored value actually changed. Called
+    /// after a reorder so the custom order survives a reload. The first reorder
+    /// on a previously-alphabetical set bakes in everyone's position; later ones
+    /// only touch the two lists that moved. The Archived list keeps its (unused)
+    /// order — `sort_lists` pins it to the bottom regardless.
+    fn renumber_lists(&mut self) {
+        let mut changed = Vec::new();
+        let mut next = 0u32;
+        for (i, list) in self.lists.iter_mut().enumerate() {
+            if list.is_archive() {
+                continue;
+            }
+            if list.order != Some(next) {
+                list.order = Some(next);
+                changed.push(i);
+            }
+            next += 1;
+        }
+        for i in changed {
+            self.save_list_at(i);
+        }
     }
 
     /// Create the Archived list (on disk and in memory) if it doesn't exist yet.
@@ -983,6 +1014,42 @@ impl App {
         } else {
             self.archive_current_task();
         }
+    }
+
+    // --- reorder the current selection ---------------------------------------
+
+    /// Focus-aware reorder: nudge the selected list or task by `delta` slots
+    /// (-1 = up, +1 = down). Mirrors [`App::move_selection`] so the same keys
+    /// (Shift+J/K) reorder whichever pane has focus.
+    pub fn reorder_selection(&mut self, delta: isize) {
+        match self.focus {
+            Focus::Lists => self.reorder_list(delta),
+            Focus::Tasks => self.reorder_task(delta),
+        }
+    }
+
+    /// Swap the selected list with its neighbour `delta` slots away (-1 = up,
+    /// +1 = down) and persist the new order. A no-op off the lists pane, in a
+    /// task's detail view, at the ends, or involving the pinned Archived list
+    /// (which stays at the bottom and can't be moved past).
+    pub fn reorder_list(&mut self, delta: isize) {
+        if self.focus != Focus::Lists || self.in_detail() {
+            return;
+        }
+        let cur = self.selected_list();
+        let target = cur as isize + delta;
+        if target < 0 || target >= self.lists.len() as isize {
+            return;
+        }
+        let target = target as usize;
+        if self.lists.get(cur).is_some_and(|l| l.is_archive())
+            || self.lists.get(target).is_some_and(|l| l.is_archive())
+        {
+            return;
+        }
+        self.lists.swap(cur, target);
+        self.renumber_lists();
+        self.list_state.select(Some(target));
     }
 
     // --- reorder tasks within a list -----------------------------------------

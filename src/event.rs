@@ -101,8 +101,8 @@ fn dispatch(app: &mut App, action: Action) {
         Action::FocusLists | Action::FocusTasks => {}
         Action::MoveDown => app.move_selection(1),
         Action::MoveUp => app.move_selection(-1),
-        Action::ReorderDown => app.reorder_task(1),
-        Action::ReorderUp => app.reorder_task(-1),
+        Action::ReorderDown => app.reorder_selection(1),
+        Action::ReorderUp => app.reorder_selection(-1),
         Action::SendTop => app.send_task(true),
         Action::SendBottom => app.send_task(false),
         Action::ToggleDone => app.toggle_selected(),

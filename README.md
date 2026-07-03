@@ -10,7 +10,7 @@ A fast, local-first todo list for your terminal. Fully keyboard-driven (with mou
 - **Rich tasks**: priority, due date, tags, free-text notes, and one level of
   checkable subtasks.
 - **Reorder freely**: nudge a task up/down or send it straight to the top or
-  bottom of its list.
+  bottom of its list — and reorder your lists in the sidebar the same way.
 - **Archive, don't delete**: press `d` to tuck a task into the dimmed
   **Archived** list (pinned at the bottom of the sidebar) instead of losing it;
   `X` deletes for good, and `m` moves a task back out to unarchive it.
@@ -101,7 +101,7 @@ Press `?` in the app for the same list grouped into an overlay. All of these key
 | Key | Action |
 |-----|--------|
 | `Space` | toggle the selected task (or subtask) done |
-| `J`/`K`, `Shift`+`↓`/`↑` | move the selected task down / up within the list |
+| `J`/`K`, `Shift`+`↓`/`↑` | reorder the selected task (or list, when the sidebar is focused) down / up |
 | `g`/`G` | send the selected task to the top / bottom of the list |
 | `m` | move the selected task to another list (also how you unarchive) |
 
@@ -185,7 +185,7 @@ tudo writes a full `keybindings` block into your `config.json` (on first run, an
 | `activate` | `enter` | open a task's detail / drill into a list |
 | `back` | `esc` | close a dialog / leave detail / clear the filter |
 | `toggle-done` | `space` | toggle the selected task or subtask done |
-| `reorder-down` / `reorder-up` | `J`/`shift+down`, `K`/`shift+up` | move the task down / up |
+| `reorder-down` / `reorder-up` | `J`/`shift+down`, `K`/`shift+up` | reorder the task (or list, when the sidebar is focused) down / up |
 | `send-top` / `send-bottom` | `g` / `G` | send the task to the top / bottom |
 | `move-task` | `m` | move the task to another list (also unarchives) |
 | `add-task` / `add-list` | `a` / `A` | add a task / a list |

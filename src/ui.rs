@@ -636,7 +636,7 @@ fn render_help(f: &mut Frame, app: &App) {
         row(&keys_for(app, &[Action::ToggleDone]), "toggle done", LW),
         row(
             &keys_for(app, &[Action::ReorderDown, Action::ReorderUp]),
-            "move up / down",
+            "reorder up / down",
             LW,
         ),
         row(

@@ -287,6 +287,85 @@ fn reorder_task_steps_past_hidden_tasks_under_filter() {
 }
 
 #[test]
+fn reorder_list_persists_and_clamps_at_edges() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app_in(dir.path());
+    let names = |app: &App| -> Vec<String> { app.lists.iter().map(|l| l.name.clone()).collect() };
+
+    // Created out of order; the sidebar starts alphabetical.
+    app.add_list("Banana".to_string());
+    app.add_list("Apple".to_string());
+    app.add_list("Cherry".to_string());
+    assert_eq!(names(&app), ["Apple", "Banana", "Cherry"]);
+
+    // Select "Apple" in the sidebar and nudge it down past "Banana".
+    app.select_list_index(0);
+    assert_eq!(app.current_list().unwrap().name, "Apple");
+    app.reorder_list(1);
+    assert_eq!(names(&app), ["Banana", "Apple", "Cherry"]);
+    // Selection follows the moved list.
+    assert_eq!(app.selected_list(), 1);
+    assert_eq!(app.current_list().unwrap().name, "Apple");
+
+    // Nudge it down once more, then hit the bottom edge (a no-op).
+    app.reorder_list(1);
+    assert_eq!(names(&app), ["Banana", "Cherry", "Apple"]);
+    app.reorder_list(1);
+    assert_eq!(names(&app), ["Banana", "Cherry", "Apple"]);
+
+    // The custom order round-trips through disk (i.e. it beats the load-time
+    // alphabetical fallback).
+    let reloaded = app_in(dir.path());
+    assert_eq!(names(&reloaded), ["Banana", "Cherry", "Apple"]);
+}
+
+#[test]
+fn shift_j_reorders_the_list_when_the_sidebar_is_focused() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app_in(dir.path());
+    app.add_list("Apple".to_string());
+    app.add_list("Banana".to_string());
+    app.select_list_index(0); // focuses the sidebar on "Apple"
+
+    // `J` (reorder-down) drives the whole key path, not just the App method.
+    event::handle_key(&mut app, KeyEvent::from(KeyCode::Char('J')));
+    let names: Vec<String> = app.lists.iter().map(|l| l.name.clone()).collect();
+    assert_eq!(names, ["Banana", "Apple"]);
+    assert_eq!(app.current_list().unwrap().name, "Apple");
+}
+
+#[test]
+fn reorder_list_leaves_archive_pinned_last() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app_in(dir.path());
+    app.add_list("Work".to_string());
+    app.add_list("Zebra".to_string());
+
+    // Create the Archived list (pinned last) by archiving a task.
+    app.select_list_index(0); // Work
+    app.focus_tasks();
+    app.add_task("t".to_string());
+    app.delete_or_archive();
+    assert!(app.lists.last().unwrap().is_archive());
+    let before: Vec<String> = app.lists.iter().map(|l| l.name.clone()).collect();
+
+    // The last user list can't be pushed below the archive.
+    let zebra = app.lists.iter().position(|l| l.name == "Zebra").unwrap();
+    app.select_list_index(zebra);
+    app.reorder_list(1);
+    assert_eq!(
+        app.lists.iter().map(|l| l.name.clone()).collect::<Vec<_>>(),
+        before
+    );
+
+    // The archive itself can't be dragged up out of the bottom slot.
+    let arch = app.lists.iter().position(|l| l.is_archive()).unwrap();
+    app.select_list_index(arch);
+    app.reorder_list(-1);
+    assert!(app.lists.last().unwrap().is_archive());
+}
+
+#[test]
 fn archive_is_created_lazily_and_pinned_last() {
     let dir = tempfile::tempdir().unwrap();
     let mut app = app_in(dir.path());
