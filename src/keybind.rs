@@ -60,6 +60,7 @@ pub enum Action {
     // Find & app
     Search,
     CycleFilter,
+    SortPicker,
     Copy,
     ThemePicker,
     Settings,
@@ -69,7 +70,7 @@ pub enum Action {
 
 impl Action {
     /// All actions, in canonical order.
-    pub const ALL: [Action; 30] = [
+    pub const ALL: [Action; 31] = [
         Action::ToggleFocus,
         Action::FocusLists,
         Action::FocusTasks,
@@ -95,6 +96,7 @@ impl Action {
         Action::Delete,
         Action::Search,
         Action::CycleFilter,
+        Action::SortPicker,
         Action::Copy,
         Action::ThemePicker,
         Action::Settings,
@@ -130,6 +132,7 @@ impl Action {
             Action::Delete => "delete",
             Action::Search => "search",
             Action::CycleFilter => "cycle-filter",
+            Action::SortPicker => "sort",
             Action::Copy => "copy",
             Action::ThemePicker => "theme-picker",
             Action::Settings => "settings",
@@ -180,6 +183,7 @@ impl Action {
             Action::Delete => vec![c(KeyCode::Char('X'))],
             Action::Search => vec![c(KeyCode::Char('/'))],
             Action::CycleFilter => vec![c(KeyCode::Char('f'))],
+            Action::SortPicker => vec![c(KeyCode::Char('o'))],
             Action::Copy => vec![c(KeyCode::Char('c'))],
             Action::ThemePicker => vec![c(KeyCode::Char('T'))],
             Action::Settings => vec![c(KeyCode::Char('S'))],

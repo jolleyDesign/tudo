@@ -15,7 +15,7 @@ use ratatui::widgets::{
 
 use crate::app::{App, Focus, Mode};
 use crate::keybind::Action;
-use crate::model::Task;
+use crate::model::{Sort, Task};
 use crate::theme;
 
 pub fn render(f: &mut Frame, app: &mut App) {
@@ -38,6 +38,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
         Mode::ThemePicker(_) => render_theme_picker(f, app),
         Mode::MovePicker(_) => render_move_picker(f, app),
         Mode::CopyMenu(_) => render_copy_menu(f, app),
+        Mode::SortPicker(_) => render_sort_picker(f, app),
         Mode::Settings => render_settings(f, app),
         Mode::Help => render_help(f, app),
         _ => {}
@@ -465,6 +466,11 @@ fn render_footer(f: &mut Frame, area: Rect, app: &App) {
         }
         right.push(' ');
     }
+    // Only surface the sort when it isn't the default manual order, to keep the
+    // footer quiet in the common case.
+    if app.sort != Sort::Manual {
+        right.push_str(&format!("sort:{} ", app.sort.label()));
+    }
     if !app.status.is_empty() {
         right.push_str(&app.status);
         right.push(' ');
@@ -649,6 +655,7 @@ fn render_help(f: &mut Frame, app: &App) {
         header("Find"),
         row(&keys_for(app, &[Action::Search]), "search", LW),
         row(&keys_for(app, &[Action::CycleFilter]), "cycle filter", LW),
+        row(&keys_for(app, &[Action::SortPicker]), "sort tasks", LW),
         row(&keys_for(app, &[Action::Copy]), "copy task", LW),
     ];
 
@@ -829,6 +836,53 @@ fn render_copy_menu(f: &mut Frame, app: &App) {
     lines.push(Line::raw(""));
     lines.push(Line::from(Span::styled(
         "\u{2191}/\u{2193} choose \u{00b7} 1-3 quick \u{00b7} Enter copy \u{00b7} Esc cancel",
+        Style::default().fg(theme::muted()),
+    )));
+
+    f.render_widget(Paragraph::new(Text::from(lines)), inner);
+}
+
+fn render_sort_picker(f: &mut Frame, app: &App) {
+    let Mode::SortPicker(state) = &app.mode else {
+        return;
+    };
+    let options = crate::model::Sort::all();
+    let area = centered_rect(f.area(), 60, options.len() as u16 + 6);
+    overlay_clear(f, area);
+    let block = overlay_block("Sort tasks", theme::accent());
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+
+    let mut lines: Vec<Line> = vec![
+        Line::from(Span::styled(
+            "Order the tasks in this list by:",
+            Style::default().fg(theme::muted()),
+        )),
+        Line::raw(""),
+    ];
+    for (i, sort) in options.iter().enumerate() {
+        let selected = i == state.selected;
+        let marker = if selected { "\u{258e} " } else { "  " };
+        let name_style = if selected {
+            Style::default()
+                .fg(theme::accent())
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(theme::fg())
+        };
+        lines.push(Line::from(vec![
+            Span::styled(marker, Style::default().fg(theme::accent())),
+            Span::styled(format!("{}  ", i + 1), Style::default().fg(theme::muted())),
+            Span::styled(format!("{:<10}", sort.label()), name_style),
+            Span::styled(
+                format!("  {}", sort.description()),
+                Style::default().fg(theme::muted()),
+            ),
+        ]));
+    }
+    lines.push(Line::raw(""));
+    lines.push(Line::from(Span::styled(
+        "\u{2191}/\u{2193} choose \u{00b7} 1-5 quick \u{00b7} Enter apply \u{00b7} Esc cancel",
         Style::default().fg(theme::muted()),
     )));
 

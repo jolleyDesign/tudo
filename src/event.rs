@@ -27,6 +27,7 @@ pub fn handle_key(app: &mut App, key: KeyEvent) {
         Mode::ThemePicker(_) => theme_picker_key(app, key),
         Mode::MovePicker(_) => move_picker_key(app, key),
         Mode::CopyMenu(_) => copy_menu_key(app, key),
+        Mode::SortPicker(_) => sort_picker_key(app, key),
         Mode::Settings => settings_key(app, key),
         Mode::Help => app.close_overlay(),
         Mode::Normal | Mode::Detail => nav_key(app, key),
@@ -71,6 +72,17 @@ fn copy_menu_key(app: &mut App, key: KeyEvent) {
         KeyCode::Char('3') => app.copy_selected(CopyWhat::Notes),
         KeyCode::Enter => app.copy_menu_confirm(),
         KeyCode::Esc | KeyCode::Char('q') => app.copy_menu_cancel(),
+        _ => {}
+    }
+}
+
+fn sort_picker_key(app: &mut App, key: KeyEvent) {
+    match key.code {
+        KeyCode::Char('j') | KeyCode::Down => app.sort_picker_move(1),
+        KeyCode::Char('k') | KeyCode::Up => app.sort_picker_move(-1),
+        KeyCode::Char(c @ '1'..='5') => app.sort_picker_select(c as usize - '1' as usize),
+        KeyCode::Enter => app.sort_picker_confirm(),
+        KeyCode::Esc | KeyCode::Char('q') => app.sort_picker_cancel(),
         _ => {}
     }
 }
@@ -121,6 +133,7 @@ fn dispatch(app: &mut App, action: Action) {
         Action::Copy => app.start_copy(),
         Action::Search => app.start_search(),
         Action::CycleFilter => app.cycle_status_filter(),
+        Action::SortPicker => app.open_sort_picker(),
         Action::ThemePicker => app.open_theme_picker(),
         Action::Settings => app.open_settings(),
     }

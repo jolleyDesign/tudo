@@ -4,6 +4,8 @@
 //! (toggling, priority cycling, due-date parsing) so the rest of the app and
 //! the tests can exercise behaviour without a terminal.
 
+use std::cmp::Ordering;
+
 use chrono::{DateTime, Days, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -118,6 +120,17 @@ impl Task {
         !self.done && self.due == Some(today)
     }
 
+    /// Sort rank for the task's priority: High(0) < Medium(1) < Low(2) < None(3),
+    /// so ascending order puts the most important tasks first.
+    fn priority_rank(&self) -> u8 {
+        match self.priority {
+            Some(Priority::High) => 0,
+            Some(Priority::Medium) => 1,
+            Some(Priority::Low) => 2,
+            None => 3,
+        }
+    }
+
     /// (completed, total) subtasks, or None when there are no subtasks.
     pub fn subtask_progress(&self) -> Option<(usize, usize)> {
         if self.subtasks.is_empty() {
@@ -125,6 +138,76 @@ impl Task {
         } else {
             let done = self.subtasks.iter().filter(|s| s.done).count();
             Some((done, self.subtasks.len()))
+        }
+    }
+}
+
+/// How the visible task list is ordered. `Manual` is the user's own order (set
+/// by the reorder keys) and is the default; the rest sort by a task field.
+///
+/// Session-only, like the status/search [`Filter`](crate::app::Filter): it isn't
+/// persisted, so each run starts back on `Manual`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Sort {
+    /// The user's manual order (reordering keys stay enabled).
+    #[default]
+    Manual,
+    /// Highest priority first (high → medium → low → none).
+    Priority,
+    /// Soonest due date first; tasks with no due date come last.
+    Due,
+    /// Most recently created first.
+    Created,
+    /// Alphabetical by title (case-insensitive).
+    Alphabetical,
+}
+
+impl Sort {
+    /// All sorts, in the order they appear in the picker.
+    pub fn all() -> [Sort; 5] {
+        [
+            Sort::Manual,
+            Sort::Priority,
+            Sort::Due,
+            Sort::Created,
+            Sort::Alphabetical,
+        ]
+    }
+
+    /// Short label for the footer indicator and status line.
+    pub fn label(self) -> &'static str {
+        match self {
+            Sort::Manual => "manual",
+            Sort::Priority => "priority",
+            Sort::Due => "due date",
+            Sort::Created => "created",
+            Sort::Alphabetical => "A–Z",
+        }
+    }
+
+    /// One-line explanation shown beside each option in the picker.
+    pub fn description(self) -> &'static str {
+        match self {
+            Sort::Manual => "your own order · reordering enabled",
+            Sort::Priority => "highest priority first",
+            Sort::Due => "soonest due date first",
+            Sort::Created => "newest first",
+            Sort::Alphabetical => "by title, A to Z",
+        }
+    }
+
+    /// Order two tasks for this sort. `Manual` reports every pair equal, so a
+    /// *stable* sort with it leaves the stored order untouched — and any ties
+    /// under the other sorts fall back to that same stored order.
+    pub fn compare(self, a: &Task, b: &Task) -> Ordering {
+        match self {
+            Sort::Manual => Ordering::Equal,
+            Sort::Priority => a.priority_rank().cmp(&b.priority_rank()),
+            // `(is_none, due)` keys put dated tasks (false) before undated ones
+            // (true), and order two dated tasks by their date ascending.
+            Sort::Due => (a.due.is_none(), a.due).cmp(&(b.due.is_none(), b.due)),
+            Sort::Created => b.created.cmp(&a.created),
+            Sort::Alphabetical => a.title.to_lowercase().cmp(&b.title.to_lowercase()),
         }
     }
 }

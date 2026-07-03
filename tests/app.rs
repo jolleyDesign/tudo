@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use tudo::app::{App, CopyWhat, InputField, Mode, StatusFilter};
 use tudo::keybind::{Keymap, Overrides};
-use tudo::model::Priority;
+use tudo::model::{Priority, Sort};
 use tudo::theme::ThemeKind;
 use tudo::{config, event, storage};
 
@@ -802,4 +802,182 @@ fn config_round_trips_keybindings() {
     };
     let json = serde_json::to_string(&empty).unwrap();
     assert!(!json.contains("keybindings"), "empty map should be omitted");
+}
+
+// --- sort -------------------------------------------------------------------
+
+/// The titles of the currently visible tasks, in display order.
+fn visible_titles(app: &App) -> Vec<String> {
+    let list = app.current_list().unwrap();
+    app.visible_task_indices()
+        .iter()
+        .map(|&i| list.tasks[i].title.clone())
+        .collect()
+}
+
+/// Give the visible task at `vidx` a priority by cycling to it (none -> low ->
+/// medium -> high).
+fn set_priority(app: &mut App, vidx: usize, p: Priority) {
+    app.select_task_visible(vidx);
+    let steps = match p {
+        Priority::Low => 1,
+        Priority::Medium => 2,
+        Priority::High => 3,
+    };
+    for _ in 0..steps {
+        app.cycle_current_priority();
+    }
+}
+
+#[test]
+fn default_sort_is_manual_and_preserves_insertion_order() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app_in(dir.path());
+    app.add_list("L".to_string());
+    app.add_task("first".to_string());
+    app.add_task("second".to_string());
+    app.add_task("third".to_string());
+
+    assert_eq!(app.sort, Sort::Manual);
+    assert_eq!(visible_titles(&app), ["first", "second", "third"]);
+}
+
+#[test]
+fn sort_by_priority_puts_high_first_and_none_last() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app_in(dir.path());
+    app.add_list("L".to_string());
+    app.add_task("low".to_string()); // raw 0
+    app.add_task("high".to_string()); // raw 1
+    app.add_task("none".to_string()); // raw 2
+    app.add_task("mid".to_string()); // raw 3
+    set_priority(&mut app, 0, Priority::Low);
+    set_priority(&mut app, 1, Priority::High);
+    set_priority(&mut app, 3, Priority::Medium);
+
+    app.set_sort(Sort::Priority);
+    assert_eq!(visible_titles(&app), ["high", "mid", "low", "none"]);
+}
+
+#[test]
+fn sort_by_due_orders_soonest_first_with_undated_last() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app_in(dir.path());
+    app.add_list("L".to_string());
+    app.add_task("undated".to_string()); // raw 0
+    app.add_task("later".to_string()); // raw 1
+    app.add_task("soon".to_string()); // raw 2
+
+    app.select_task_visible(1);
+    app.set_current_due("+10");
+    app.select_task_visible(2);
+    app.set_current_due("+1");
+
+    app.set_sort(Sort::Due);
+    assert_eq!(visible_titles(&app), ["soon", "later", "undated"]);
+}
+
+#[test]
+fn sort_alphabetical_is_case_insensitive() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app_in(dir.path());
+    app.add_list("L".to_string());
+    app.add_task("banana".to_string());
+    app.add_task("Apple".to_string());
+    app.add_task("cherry".to_string());
+
+    app.set_sort(Sort::Alphabetical);
+    assert_eq!(visible_titles(&app), ["Apple", "banana", "cherry"]);
+}
+
+#[test]
+fn ties_fall_back_to_stored_order() {
+    // With no priorities set, every task ties under the priority sort, so the
+    // (stable) result matches the stored/manual order.
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app_in(dir.path());
+    app.add_list("L".to_string());
+    app.add_task("a".to_string());
+    app.add_task("b".to_string());
+    app.add_task("c".to_string());
+
+    app.set_sort(Sort::Priority);
+    assert_eq!(visible_titles(&app), ["a", "b", "c"]);
+}
+
+#[test]
+fn changing_sort_keeps_the_same_task_selected() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app_in(dir.path());
+    app.add_list("L".to_string());
+    app.add_task("low".to_string()); // raw 0
+    app.add_task("high".to_string()); // raw 1
+    set_priority(&mut app, 0, Priority::Low);
+    set_priority(&mut app, 1, Priority::High);
+
+    // Select "low" (top of the manual order), then sort by priority.
+    app.select_task_visible(0);
+    assert_eq!(app.current_task().unwrap().title, "low");
+    app.set_sort(Sort::Priority);
+
+    // "low" is now last, but the cursor still points at it.
+    assert_eq!(visible_titles(&app), ["high", "low"]);
+    assert_eq!(app.current_task().unwrap().title, "low");
+    assert_eq!(app.selected_visible_task(), 1);
+}
+
+#[test]
+fn reordering_is_refused_under_a_non_manual_sort() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app_in(dir.path());
+    app.add_list("L".to_string());
+    app.add_task("a".to_string());
+    app.add_task("b".to_string());
+    app.add_task("c".to_string());
+    let stored = |app: &App| -> Vec<String> {
+        app.current_list()
+            .unwrap()
+            .tasks
+            .iter()
+            .map(|t| t.title.clone())
+            .collect()
+    };
+
+    app.set_sort(Sort::Alphabetical);
+    app.select_task_visible(0);
+
+    // Both the nudge and the send-to-edge keys are no-ops and leave a hint.
+    app.reorder_task(1);
+    assert_eq!(stored(&app), ["a", "b", "c"]);
+    assert!(app.status.contains("manual"));
+
+    app.send_task(false);
+    assert_eq!(stored(&app), ["a", "b", "c"]);
+
+    // Back on manual sort, reordering works again.
+    app.set_sort(Sort::Manual);
+    app.select_task_visible(0);
+    app.reorder_task(1);
+    assert_eq!(stored(&app), ["b", "a", "c"]);
+}
+
+#[test]
+fn sort_picker_opens_and_quick_key_applies() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app_in(dir.path());
+    app.add_list("L".to_string());
+    app.add_task("x".to_string());
+
+    // `o` opens the picker; `2` picks the second option (Priority).
+    event::handle_key(&mut app, KeyEvent::from(KeyCode::Char('o')));
+    assert!(matches!(app.mode, Mode::SortPicker(_)));
+    event::handle_key(&mut app, KeyEvent::from(KeyCode::Char('2')));
+    assert!(matches!(app.mode, Mode::Normal));
+    assert_eq!(app.sort, Sort::Priority);
+
+    // Reopen and cancel with Esc: the sort is unchanged.
+    event::handle_key(&mut app, KeyEvent::from(KeyCode::Char('o')));
+    event::handle_key(&mut app, KeyEvent::from(KeyCode::Esc));
+    assert!(matches!(app.mode, Mode::Normal));
+    assert_eq!(app.sort, Sort::Priority);
 }

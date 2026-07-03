@@ -11,6 +11,9 @@ A fast, local-first todo list for your terminal. Fully keyboard-driven (with mou
   checkable subtasks.
 - **Reorder freely**: nudge a task up/down or send it straight to the top or
   bottom of its list — and reorder your lists in the sidebar the same way.
+- **Sort on demand**: press `o` to order a list by priority, due date, creation
+  date, or title — or stay on manual order, where your own arrangement (and the
+  reorder keys) rules.
 - **Archive, don't delete**: press `d` to tuck a task into the dimmed
   **Archived** list (pinned at the bottom of the sidebar) instead of losing it;
   `X` deletes for good, and `m` moves a task back out to unarchive it.
@@ -130,6 +133,7 @@ Press `?` in the app for the same list grouped into an overlay. All of these key
 |-----|--------|
 | `/` | search (titles, tags, notes) |
 | `f` | cycle the status filter (all / active / done) |
+| `o` | sort tasks (menu: manual / priority / due date / created / A–Z) |
 | `c` | copy the selected task (menu: full JSON / title / description) |
 | `T` | open the theme picker |
 | `S` | open settings (paths, data location) |
@@ -199,6 +203,7 @@ tudo writes a full `keybindings` block into your `config.json` (on first run, an
 | `delete` | `X` | permanently delete (asks to confirm) |
 | `search` | `/` | search titles, tags, and notes |
 | `cycle-filter` | `f` | cycle the status filter (all / active / done) |
+| `sort` | `o` | open the sort picker (manual / priority / due date / created / A–Z) |
 | `copy` | `c` | copy the selected task |
 | `theme-picker` | `T` | open the theme picker |
 | `settings` | `S` | open settings |

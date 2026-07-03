@@ -16,7 +16,7 @@ pub const STATUS_TTL: Duration = Duration::from_secs(4);
 
 use crate::config::{self, Config};
 use crate::keybind::Keymap;
-use crate::model::{self, List, Subtask, Task};
+use crate::model::{self, List, Sort, Subtask, Task};
 use crate::storage;
 use crate::theme::{self, ThemeKind};
 
@@ -225,6 +225,15 @@ pub struct CopyMenuState {
     pub return_detail: bool,
 }
 
+/// State for the "sort tasks" picker overlay.
+#[derive(Debug, Clone)]
+pub struct SortPickerState {
+    /// Cursor into [`Sort::all`].
+    pub selected: usize,
+    /// Return to Detail mode (vs Normal) when finished.
+    pub return_detail: bool,
+}
+
 /// The active interaction mode.
 #[derive(Debug, Clone)]
 pub enum Mode {
@@ -236,6 +245,7 @@ pub enum Mode {
     ThemePicker(ThemePickerState),
     MovePicker(MovePickerState),
     CopyMenu(CopyMenuState),
+    SortPicker(SortPickerState),
     Settings,
     Help,
 }
@@ -325,6 +335,8 @@ pub struct App {
     pub task_state: ListState,
     pub subtask_state: ListState,
     pub filter: Filter,
+    /// How the visible task list is ordered (session-only; see [`Sort`]).
+    pub sort: Sort,
     pub theme: ThemeKind,
     /// The resolved keybindings (built-in defaults plus any config overrides).
     pub keymap: Keymap,
@@ -363,6 +375,7 @@ impl App {
             task_state: ListState::default(),
             subtask_state: ListState::default(),
             filter: Filter::default(),
+            sort: Sort::default(),
             theme,
             keymap: Keymap::default(),
             status: String::new(),
@@ -583,18 +596,26 @@ impl App {
         self.lists.get(self.selected_list())
     }
 
-    /// Indices into the current list's `tasks` that pass the filter.
+    /// Indices into the current list's `tasks` that pass the filter, ordered by
+    /// the active [`Sort`]. The result is always in *display* order, so the rest
+    /// of the app can treat "visible position" and "screen row" as the same
+    /// thing. `Sort::Manual` keeps the stored order; the others sort a stable
+    /// copy, so ties fall back to that stored order too.
     pub fn visible_task_indices(&self) -> Vec<usize> {
-        match self.current_list() {
-            Some(list) => list
-                .tasks
-                .iter()
-                .enumerate()
-                .filter(|(_, t)| self.filter.matches(t))
-                .map(|(i, _)| i)
-                .collect(),
-            None => Vec::new(),
+        let Some(list) = self.current_list() else {
+            return Vec::new();
+        };
+        let mut indices: Vec<usize> = list
+            .tasks
+            .iter()
+            .enumerate()
+            .filter(|(_, t)| self.filter.matches(t))
+            .map(|(i, _)| i)
+            .collect();
+        if self.sort != Sort::Manual {
+            indices.sort_by(|&a, &b| self.sort.compare(&list.tasks[a], &list.tasks[b]));
         }
+        indices
     }
 
     /// Raw index (into `tasks`) of the currently selected task.
@@ -1018,6 +1039,20 @@ impl App {
 
     // --- reorder the current selection ---------------------------------------
 
+    /// Manual task reordering only makes sense under [`Sort::Manual`]: with any
+    /// other sort the visible order is derived from a task field, so a swap
+    /// wouldn't stick. Returns `true` (after setting a hint) when a task reorder
+    /// should be refused. List reordering is unaffected — lists have their own
+    /// order independent of the task sort.
+    fn reorder_blocked_by_sort(&mut self) -> bool {
+        if self.sort != Sort::Manual {
+            self.set_status("reordering needs manual sort (press o)".to_string());
+            true
+        } else {
+            false
+        }
+    }
+
     /// Focus-aware reorder: nudge the selected list or task by `delta` slots
     /// (-1 = up, +1 = down). Mirrors [`App::move_selection`] so the same keys
     /// (Shift+J/K) reorder whichever pane has focus.
@@ -1059,7 +1094,7 @@ impl App {
     /// it stays intuitive under a filter; a no-op at the ends, off the task
     /// pane, or in a task's detail view.
     pub fn reorder_task(&mut self, delta: isize) {
-        if self.focus != Focus::Tasks || self.in_detail() {
+        if self.focus != Focus::Tasks || self.in_detail() || self.reorder_blocked_by_sort() {
             return;
         }
         let vis = self.visible_task_indices();
@@ -1082,7 +1117,7 @@ impl App {
     /// and persist. A no-op with fewer than two visible tasks, off the task
     /// pane, or in detail view.
     pub fn send_task(&mut self, to_top: bool) {
-        if self.focus != Focus::Tasks || self.in_detail() {
+        if self.focus != Focus::Tasks || self.in_detail() || self.reorder_blocked_by_sort() {
             return;
         }
         let vis = self.visible_task_indices();
@@ -1261,6 +1296,79 @@ impl App {
                 Mode::Normal
             };
         }
+    }
+
+    // --- sort ----------------------------------------------------------------
+
+    /// Open the sort picker, highlighting the sort currently in effect.
+    pub fn open_sort_picker(&mut self) {
+        let selected = Sort::all()
+            .iter()
+            .position(|&s| s == self.sort)
+            .unwrap_or(0);
+        self.mode = Mode::SortPicker(SortPickerState {
+            selected,
+            return_detail: self.in_detail(),
+        });
+    }
+
+    /// Move the picker highlight (wraps).
+    pub fn sort_picker_move(&mut self, delta: isize) {
+        if let Mode::SortPicker(state) = &mut self.mode {
+            let n = Sort::all().len() as isize;
+            state.selected = ((((state.selected as isize + delta) % n) + n) % n) as usize;
+        }
+    }
+
+    /// Apply the highlighted sort and close the picker.
+    pub fn sort_picker_confirm(&mut self) {
+        if let Mode::SortPicker(state) = &self.mode {
+            let sort = Sort::all()[state.selected];
+            self.finish_sort_picker();
+            self.set_sort(sort);
+        }
+    }
+
+    /// Apply the sort at `idx` (the 1-5 quick keys) and close the picker.
+    pub fn sort_picker_select(&mut self, idx: usize) {
+        let all = Sort::all();
+        if idx < all.len() && matches!(self.mode, Mode::SortPicker(_)) {
+            self.finish_sort_picker();
+            self.set_sort(all[idx]);
+        }
+    }
+
+    /// Close the sort picker without changing the sort.
+    pub fn sort_picker_cancel(&mut self) {
+        if matches!(self.mode, Mode::SortPicker(_)) {
+            self.finish_sort_picker();
+        }
+    }
+
+    /// Return from the sort picker to whichever mode opened it.
+    fn finish_sort_picker(&mut self) {
+        if let Mode::SortPicker(state) = &self.mode {
+            self.mode = if state.return_detail {
+                Mode::Detail
+            } else {
+                Mode::Normal
+            };
+        }
+    }
+
+    /// Set the active sort, keeping the same task selected across the re-order
+    /// so the cursor doesn't jump to whatever happens to land in its old slot.
+    pub fn set_sort(&mut self, sort: Sort) {
+        let current_raw = self.current_task_index();
+        self.sort = sort;
+        if let Some(raw) = current_raw
+            && let Some(pos) = self.visible_task_indices().iter().position(|&i| i == raw)
+        {
+            self.task_state.select(Some(pos));
+        } else {
+            self.clamp_task_selection();
+        }
+        self.set_status(format!("sorted by {}", sort.label()));
     }
 
     // --- subtask actions -----------------------------------------------------

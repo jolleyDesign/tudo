@@ -101,6 +101,45 @@ fn copy_menu_lists_copy_options() {
 }
 
 #[test]
+fn sort_picker_lists_sort_options() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = App::new(Some(dir.path().to_path_buf())).unwrap();
+    app.add_list("Work".to_string());
+    app.add_task("Ship the TUI".to_string());
+    app.open_sort_picker();
+
+    let text = render_to_string(&mut app, 100, 30);
+    assert!(text.contains("Sort tasks"), "picker title missing: {text}");
+    assert!(text.contains("priority"), "priority option missing");
+    assert!(text.contains("due date"), "due date option missing");
+    assert!(text.contains("newest first"), "created description missing");
+    assert!(text.contains("Enter apply"), "picker hint missing");
+}
+
+#[test]
+fn footer_shows_active_sort_only_when_not_manual() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = App::new(Some(dir.path().to_path_buf())).unwrap();
+    app.add_list("Work".to_string());
+    app.add_task("Ship the TUI".to_string());
+
+    // Manual (the default) stays out of the footer.
+    let text = render_to_string(&mut app, 100, 30);
+    assert!(
+        !text.contains("sort:"),
+        "manual sort should be hidden: {text}"
+    );
+
+    // Any other sort is surfaced.
+    app.set_sort(tudo::model::Sort::Priority);
+    let text = render_to_string(&mut app, 100, 30);
+    assert!(
+        text.contains("sort:priority"),
+        "active sort missing: {text}"
+    );
+}
+
+#[test]
 fn settings_panel_shows_paths_and_format() {
     let dir = tempfile::tempdir().unwrap();
     let mut app = App::new(Some(dir.path().to_path_buf())).unwrap();
