@@ -856,14 +856,22 @@ impl App {
         self.focus = Focus::Lists;
     }
 
-    pub fn add_task(&mut self, title: String) {
-        let title = title.trim().to_string();
-        if title.is_empty() {
+    pub fn add_task(&mut self, input: String) {
+        // Quick-add: pull priority/tags/due/notes/subtasks out of the title text
+        // (see `model::parse_quick_add`). Plain titles pass through unchanged.
+        let parsed = model::parse_quick_add(&input, Self::today());
+        if parsed.title.is_empty() {
             return;
         }
         let li = self.selected_list();
         if let Some(list) = self.lists.get_mut(li) {
-            list.tasks.push(Task::new(title));
+            let mut task = Task::new(parsed.title);
+            task.priority = parsed.priority;
+            task.due = parsed.due;
+            task.tags = parsed.tags;
+            task.notes = parsed.notes;
+            task.subtasks = parsed.subtasks.into_iter().map(Subtask::new).collect();
+            list.tasks.push(task);
             self.save_list_at(li);
             // Select the new task if it is visible under the current filter.
             let visible = self.visible_task_indices();
@@ -1519,7 +1527,7 @@ impl App {
         }
         self.mode = Mode::Input(InputState::new(
             InputField::NewTask,
-            "New task",
+            "New task  ·  !! #tag @today  n:note  s:sub, sub",
             String::new(),
             false,
             false,

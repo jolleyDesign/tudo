@@ -33,6 +33,30 @@ fn add_list_then_task_persists_to_disk() {
 }
 
 #[test]
+fn quick_add_sets_fields_from_the_title_and_persists() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app_in(dir.path());
+    app.add_list("Work".to_string());
+
+    app.add_task("Ship it !! #work n:mind the changelog s:tag, publish".to_string());
+
+    let task = app.current_task().unwrap();
+    assert_eq!(task.title, "Ship it");
+    assert_eq!(task.priority, Some(Priority::Medium));
+    assert_eq!(task.tags, vec!["work"]);
+    assert_eq!(task.notes, "mind the changelog");
+    let subs: Vec<&str> = task.subtasks.iter().map(|s| s.title.as_str()).collect();
+    assert_eq!(subs, vec!["tag", "publish"]);
+
+    // Fields survive a round-trip through disk.
+    let reloaded = app_in(dir.path());
+    let task = &reloaded.lists[0].tasks[0];
+    assert_eq!(task.title, "Ship it");
+    assert_eq!(task.priority, Some(Priority::Medium));
+    assert_eq!(task.subtasks.len(), 2);
+}
+
+#[test]
 fn rename_list_persists_and_keeps_file() {
     let dir = tempfile::tempdir().unwrap();
     let mut app = app_in(dir.path());
@@ -519,7 +543,10 @@ fn task_keys_are_inert_while_the_lists_pane_is_focused() {
     event::handle_key(&mut app, KeyEvent::from(KeyCode::Char(' ')));
     event::handle_key(&mut app, KeyEvent::from(KeyCode::Char('p')));
     let task = app.current_task().unwrap();
-    assert!(!task.done, "space toggled the task despite the lists pane focus");
+    assert!(
+        !task.done,
+        "space toggled the task despite the lists pane focus"
+    );
     assert!(
         task.priority.is_none(),
         "`p` changed the task priority despite the lists pane focus"

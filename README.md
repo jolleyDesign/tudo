@@ -143,6 +143,29 @@ Press `?` in the app for the same list grouped into an overlay. All of these key
 **Due-date input** accepts `YYYY-MM-DD`, `today`, `tomorrow`, or `+N` (N days
 from today). An empty value clears the date.
 
+**Quick-add syntax:** when adding a task (`a`) you can set its fields inline
+instead of editing them one by one afterwards. For example:
+
+```
+Ship the release !! #work @tomorrow  n:double-check the changelog  s:tag it, publish, announce
+```
+
+creates a medium-priority task titled "Ship the release", tagged `work`, due
+tomorrow, with that note and three subtasks. The pieces:
+
+| Marker | Sets | Notes |
+|--------|------|-------|
+| `!` `!!` `!!!` | priority low / medium / high | a standalone token (4+ marks = high) |
+| `#tag` | a tag | repeatable |
+| `@date` | due date | `@` + anything the due-date input accepts (`@today`, `@+3`, `@2026-07-10`) |
+| `n:…` | notes | runs to the next `n:`/`s:`; repeats join with newlines |
+| `s:a, b, c` | subtasks | comma-separated; repeats accumulate |
+
+Priority, tags, and the date can appear in any order and anywhere before the
+first `n:`/`s:`; everything after that is note/subtask text. Markers are only
+recognised at a word boundary, so a plain "We won!" or "C# rewrite" keeps its
+punctuation, and anything unrecognised just stays in the title.
+
 **Mouse:** click a list or task to select it, click a task's checkbox to toggle it done, and use the scroll wheel to move within the focused pane.
 
 ## Themes

@@ -3,9 +3,10 @@
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::buffer::Buffer;
-use tudo::app::App;
+use tudo::app::{App, Mode};
 use tudo::keybind::{Keymap, Overrides};
-use tudo::ui;
+use tudo::model::Priority;
+use tudo::{theme, ui};
 
 /// Flatten the rendered buffer into a single string for substring assertions.
 fn buffer_text(buf: &Buffer) -> String {
@@ -22,10 +23,31 @@ fn buffer_text(buf: &Buffer) -> String {
 }
 
 fn render_to_string(app: &mut App, w: u16, h: u16) -> String {
+    buffer_text(&render_to_buffer(app, w, h))
+}
+
+fn render_to_buffer(app: &mut App, w: u16, h: u16) -> Buffer {
     let backend = TestBackend::new(w, h);
     let mut terminal = Terminal::new(backend).unwrap();
     terminal.draw(|f| ui::render(f, app)).unwrap();
-    buffer_text(terminal.backend().buffer())
+    terminal.backend().buffer().clone()
+}
+
+/// Column/row of the first cell where `needle` starts on a single row.
+fn find_needle(buf: &Buffer, needle: &str) -> (u16, u16) {
+    let area = buf.area;
+    for y in 0..area.height {
+        let mut row = String::new();
+        for x in 0..area.width {
+            if let Some(cell) = buf.cell((x, y)) {
+                row.push_str(cell.symbol());
+            }
+        }
+        if let Some(byte) = row.find(needle) {
+            return (row[..byte].chars().count() as u16, y);
+        }
+    }
+    panic!("{needle:?} not found in rendered buffer");
 }
 
 #[test]
@@ -39,6 +61,39 @@ fn normal_view_shows_lists_and_tasks() {
     assert!(text.contains("Lists"), "sidebar title missing: {text}");
     assert!(text.contains("Work"), "list name missing");
     assert!(text.contains("Ship the TUI"), "task title missing");
+}
+
+#[test]
+fn quick_add_input_highlights_its_markers() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = App::new(Some(dir.path().to_path_buf())).unwrap();
+    app.add_list("Work".to_string());
+
+    // Open the add-task input and seed a quick-add string.
+    app.start_add_task();
+    if let Mode::Input(input) = &mut app.mode {
+        input.buffer = "Ship !! #work".to_string();
+        input.cursor = input.buffer.chars().count();
+    } else {
+        panic!("start_add_task did not open the input");
+    }
+
+    let buf = render_to_buffer(&mut app, 100, 30);
+    let (col, row) = find_needle(&buf, "Ship !! #work");
+    let fg_at = |dx: u16| buf.cell((col + dx, row)).unwrap().fg;
+
+    // Offsets within "Ship !! #work": S=0, first !=5, #=8.
+    assert_eq!(
+        fg_at(0),
+        theme::fg(),
+        "plain title should use the base colour"
+    );
+    assert_eq!(
+        fg_at(5),
+        theme::priority_color(Priority::Medium),
+        "!! should use the medium-priority colour"
+    );
+    assert_eq!(fg_at(8), theme::purple(), "#tag should use the tag colour");
 }
 
 #[test]

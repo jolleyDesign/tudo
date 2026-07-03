@@ -13,9 +13,9 @@ use ratatui::widgets::{
     ScrollbarState, Wrap,
 };
 
-use crate::app::{App, Focus, Mode};
+use crate::app::{App, Focus, InputField, Mode};
 use crate::keybind::Action;
-use crate::model::{Sort, Task};
+use crate::model::{QuickAddSpan, Sort, Task, quick_add_spans};
 use crate::theme;
 
 pub fn render(f: &mut Frame, app: &mut App) {
@@ -504,12 +504,22 @@ fn render_input(f: &mut Frame, app: &App) {
     let inner = block.inner(area);
     f.render_widget(block, area);
 
-    f.render_widget(
-        Paragraph::new(input.buffer.as_str())
-            .style(Style::default().fg(theme::fg()))
-            .wrap(Wrap { trim: false }),
-        inner,
-    );
+    // The quick-add task input highlights its markers live; every other field
+    // is plain text. Highlighting only recolors characters, so the cursor math
+    // below (which counts characters) stays correct.
+    if input.field == InputField::NewTask {
+        f.render_widget(
+            Paragraph::new(highlight_quick_add(&input.buffer)).wrap(Wrap { trim: false }),
+            inner,
+        );
+    } else {
+        f.render_widget(
+            Paragraph::new(input.buffer.as_str())
+                .style(Style::default().fg(theme::fg()))
+                .wrap(Wrap { trim: false }),
+            inner,
+        );
+    }
 
     // Place the real terminal cursor.
     if input.multiline {
@@ -532,6 +542,37 @@ fn render_input(f: &mut Frame, app: &App) {
         let x = inner.x + input.cursor as u16;
         f.set_cursor_position((x.min(inner.x + inner.width.saturating_sub(1)), inner.y));
     }
+}
+
+/// Colour the quick-add markers in the task input, reusing the same palette the
+/// task list uses (priority colour, purple tags, teal due date) so what lights
+/// up while typing matches how the task will look. Classification comes from
+/// [`quick_add_spans`], so the highlight can't drift from what gets parsed.
+fn highlight_quick_add(buffer: &str) -> Line<'static> {
+    let spans = quick_add_spans(buffer, App::today())
+        .into_iter()
+        .map(|(start, end, kind)| {
+            let style = match kind {
+                QuickAddSpan::Plain => Style::default().fg(theme::fg()),
+                QuickAddSpan::Priority(p) => Style::default()
+                    .fg(theme::priority_color(p))
+                    .add_modifier(Modifier::BOLD),
+                QuickAddSpan::Tag => Style::default().fg(theme::purple()),
+                QuickAddSpan::Due => Style::default().fg(theme::teal()),
+                QuickAddSpan::NoteMarker => Style::default()
+                    .fg(theme::amber())
+                    .add_modifier(Modifier::BOLD),
+                QuickAddSpan::SubtaskMarker => Style::default()
+                    .fg(theme::green())
+                    .add_modifier(Modifier::BOLD),
+                QuickAddSpan::NoteText | QuickAddSpan::SubtaskText => {
+                    Style::default().fg(theme::muted())
+                }
+            };
+            Span::styled(buffer[start..end].to_string(), style)
+        })
+        .collect::<Vec<_>>();
+    Line::from(spans)
 }
 
 fn render_confirm(f: &mut Frame, app: &App) {
