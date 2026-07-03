@@ -9,6 +9,12 @@ A fast, local-first todo list for your terminal. Fully keyboard-driven (with mou
 - **Multiple lists / projects**: switch between named lists in the sidebar.
 - **Rich tasks**: priority, story points, due date, tags, free-text notes, and
   one level of checkable subtasks.
+- **Tag filters across every list**: your tags live in their own pane pinned to
+  the bottom of the sidebar (capped at half the height, scrolling on its own when
+  there are many, so your lists always keep the top). Select a tag to see every
+  task carrying it, pulled from all your lists into a single view (each row
+  labelled with its home list). Edit, complete, or reschedule tasks right there —
+  changes land back on their original list.
 - **Reorder freely**: nudge a task up/down or send it straight to the top or
   bottom of its list — and reorder your lists in the sidebar the same way.
 - **Sort on demand**: press `o` to order a list by priority, story points, due
@@ -95,8 +101,9 @@ Press `?` in the app for the same list grouped into an overlay. All of these key
 
 | Key | Action |
 |-----|--------|
-| `Tab`, `h`/`l`, `←`/`→` | switch focus between the Lists and Tasks panes |
-| `j`/`k`, `↑`/`↓` | move the selection |
+| `Tab` / `Shift`+`Tab` | cycle focus through Lists → Tags → Tasks (and back) |
+| `h`/`l`, `←`/`→` | jump between the sidebar and the Tasks pane |
+| `j`/`k`, `↑`/`↓` | move the selection (flows from the lists into the tags) |
 | `Enter` | open a task's detail view / drill into a list |
 | `Esc` | close a dialog / leave detail / clear the filter |
 
@@ -210,8 +217,9 @@ tudo writes a full `keybindings` block into your `config.json` (on first run, an
 
 | Action | Default | Does |
 |--------|---------|------|
-| `toggle-focus` | `tab` | switch focus between the Lists and Tasks panes |
-| `focus-lists` / `focus-tasks` | `h`/`left`, `l`/`right` | focus a specific pane |
+| `toggle-focus` | `tab` | cycle focus forward: Lists → Tags → Tasks |
+| `focus-prev` | `backtab` | cycle focus backward (Shift+Tab) |
+| `focus-lists` / `focus-tasks` | `h`/`left`, `l`/`right` | jump to the sidebar / the Tasks pane |
 | `move-down` / `move-up` | `j`/`down`, `k`/`up` | move the selection |
 | `activate` | `enter` | open a task's detail / drill into a list |
 | `back` | `esc` | close a dialog / leave detail / clear the filter |

@@ -20,11 +20,59 @@ use crate::model::{self, List, Sort, SortDir, Subtask, Task};
 use crate::storage;
 use crate::theme::{self, ThemeKind};
 
-/// Which pane currently has keyboard focus.
+/// Which pane currently has keyboard focus. The sidebar (lists *and* tags) is a
+/// single focus; which of its two panes is active is derived from the cursor
+/// (see [`App::current_section`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Focus {
     Lists,
     Tasks,
+}
+
+/// The three navigable regions, in `Tab` order. Derived from the focus and the
+/// sidebar cursor rather than stored; used to cycle focus with Tab / Shift+Tab.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Section {
+    Lists,
+    Tags,
+    Tasks,
+}
+
+/// A reference to a task by its home list and position within that list. Used
+/// whenever the visible task set can span lists — the cross-list tag view — so
+/// that mutations still land on the right list.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TaskRef {
+    /// Index into [`App::lists`].
+    pub list: usize,
+    /// Index into that list's `tasks`.
+    pub task: usize,
+}
+
+/// One entry in the sidebar's flat selection order: every list first (so
+/// `List(i)` always sits at index `i`), then one `Tag` per distinct tag in use.
+/// The two are rendered in separate panes (see `ui::render_sidebar`), but share
+/// this single cursor so `j`/`k` flow from the last list into the tags.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SidebarRow {
+    List(usize),
+    Tag(String),
+}
+
+/// What the tasks pane is showing, derived from the selected sidebar row: a
+/// single list, or every task carrying a tag across all lists.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum View {
+    List(usize),
+    Tag(String),
+}
+
+/// A stable identity for a selected sidebar row (lists by slug, tags by name),
+/// so the selection can be re-found after an edit reshuffles the rows.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum EntryKey {
+    List(String),
+    Tag(String),
 }
 
 /// Which text field an [`InputState`] is collecting.
@@ -323,6 +371,9 @@ impl Filter {
 pub struct Clickables {
     /// Inner area of the lists pane and the scroll offset used to draw it.
     pub lists_inner: Option<(Rect, usize)>,
+    /// Inner area of the tags pane and the scroll offset used to draw it. `None`
+    /// when no tags are in use (the sidebar is then a single Lists pane).
+    pub tags_inner: Option<(Rect, usize)>,
     /// Inner area of the tasks pane and the scroll offset used to draw it.
     pub tasks_inner: Option<(Rect, usize)>,
 }
@@ -352,6 +403,11 @@ pub struct App {
     status_expiry: Option<Instant>,
     pub should_quit: bool,
     pub clickables: Clickables,
+    /// Remembered sidebar cursor within each section (a list index, and a
+    /// tag index among the tags), so `Tab`/`Shift+Tab` restore your place when
+    /// cycling Lists → Tags → Tasks.
+    last_list_row: usize,
+    last_tag_row: usize,
 }
 
 impl App {
@@ -391,6 +447,8 @@ impl App {
             status_expiry: None,
             should_quit: false,
             clickables: Clickables::default(),
+            last_list_row: 0,
+            last_tag_row: 0,
         };
 
         // Pin any previously-created Archived list to the bottom, then select
@@ -613,63 +671,239 @@ impl App {
 
     // --- selection accessors -------------------------------------------------
 
-    pub fn selected_list(&self) -> usize {
-        self.list_state.selected().unwrap_or(0)
+    /// The sidebar's flat selection order: every list first (so `List(i)` sits
+    /// at index `i`), then one row per distinct tag. Rendered as two separate
+    /// panes but navigated as one sequence.
+    pub fn sidebar_rows(&self) -> Vec<SidebarRow> {
+        let mut rows: Vec<SidebarRow> = (0..self.lists.len()).map(SidebarRow::List).collect();
+        rows.extend(self.all_tags().into_iter().map(SidebarRow::Tag));
+        rows
     }
 
-    /// Visible-index of the selected task (index into `visible_task_indices`).
+    /// Every distinct tag in use across the real (non-archived) lists, sorted
+    /// alphabetically. Archived tasks are excluded — matching the cross-list tag
+    /// view — so a tag whose only tasks are archived drops out of the sidebar.
+    pub fn all_tags(&self) -> Vec<String> {
+        let mut set = std::collections::BTreeSet::new();
+        for list in &self.lists {
+            if list.is_archive() {
+                continue;
+            }
+            for task in &list.tasks {
+                for tag in &task.tags {
+                    set.insert(tag.clone());
+                }
+            }
+        }
+        set.into_iter().collect()
+    }
+
+    /// `(open, total)` task counts for a tag across the real lists (archived
+    /// excluded), mirroring how list rows show their own counts.
+    pub fn tag_counts(&self, name: &str) -> (usize, usize) {
+        let mut open = 0;
+        let mut total = 0;
+        for list in &self.lists {
+            if list.is_archive() {
+                continue;
+            }
+            for task in &list.tasks {
+                if task.tags.iter().any(|t| t == name) {
+                    total += 1;
+                    open += usize::from(!task.done);
+                }
+            }
+        }
+        (open, total)
+    }
+
+    /// The sidebar row currently selected, if any.
+    pub fn selected_row(&self) -> Option<SidebarRow> {
+        self.sidebar_rows()
+            .into_iter()
+            .nth(self.list_state.selected()?)
+    }
+
+    /// What the tasks pane is showing, derived from the selected sidebar row.
+    /// `None` when nothing (or a header) is selected.
+    pub fn current_view(&self) -> Option<View> {
+        match self.selected_row()? {
+            SidebarRow::List(i) => Some(View::List(i)),
+            SidebarRow::Tag(name) => Some(View::Tag(name)),
+        }
+    }
+
+    /// The selected list's index into [`App::lists`], or `None` when a tag row
+    /// is selected. Use this for list-scoped actions (add/rename/delete/reorder).
+    pub fn selected_list_index(&self) -> Option<usize> {
+        match self.current_view()? {
+            View::List(i) => Some(i),
+            View::Tag(_) => None,
+        }
+    }
+
+    /// The selected list index, falling back to 0. Kept for the common case and
+    /// for callers/tests that predate the tag view; prefer
+    /// [`selected_list_index`](Self::selected_list_index) when "no single list is
+    /// selected" needs its own handling.
+    pub fn selected_list(&self) -> usize {
+        self.selected_list_index().unwrap_or(0)
+    }
+
+    /// Visible-index of the selected task (index into [`visible_task_refs`]).
+    ///
+    /// [`visible_task_refs`]: Self::visible_task_refs
     pub fn selected_visible_task(&self) -> usize {
         self.task_state.selected().unwrap_or(0)
     }
 
     pub fn current_list(&self) -> Option<&List> {
-        self.lists.get(self.selected_list())
+        self.lists.get(self.selected_list_index()?)
     }
 
-    /// Indices into the current list's `tasks` that pass the filter, ordered by
-    /// the active [`Sort`]. The result is always in *display* order, so the rest
-    /// of the app can treat "visible position" and "screen row" as the same
-    /// thing. `Sort::Manual` keeps the stored order; the others sort a stable
-    /// copy, so ties fall back to that stored order too.
-    pub fn visible_task_indices(&self) -> Vec<usize> {
-        let Some(list) = self.current_list() else {
-            return Vec::new();
+    /// The tasks shown in the tasks pane, as `(list, task)` references in display
+    /// order. In the list view every ref shares the selected list; in the tag
+    /// view they span every real list. The active search/status filter and the
+    /// sort (plus the completed-to-bottom preference) apply to both.
+    ///
+    /// `Sort::Manual` keeps the natural order — stored order within a list, and
+    /// list-then-task order across the tag view — and any ties under the other
+    /// sorts fall back to it.
+    pub fn visible_task_refs(&self) -> Vec<TaskRef> {
+        let mut refs: Vec<TaskRef> = match self.current_view() {
+            Some(View::List(li)) => {
+                let Some(list) = self.lists.get(li) else {
+                    return Vec::new();
+                };
+                list.tasks
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, t)| self.filter.matches(t))
+                    .map(|(task, _)| TaskRef { list: li, task })
+                    .collect()
+            }
+            Some(View::Tag(tag)) => {
+                let mut out = Vec::new();
+                for (li, list) in self.lists.iter().enumerate() {
+                    if list.is_archive() {
+                        continue;
+                    }
+                    for (ti, task) in list.tasks.iter().enumerate() {
+                        if task.tags.contains(&tag) && self.filter.matches(task) {
+                            out.push(TaskRef { list: li, task: ti });
+                        }
+                    }
+                }
+                out
+            }
+            None => return Vec::new(),
         };
-        let mut indices: Vec<usize> = list
-            .tasks
-            .iter()
-            .enumerate()
-            .filter(|(_, t)| self.filter.matches(t))
-            .map(|(i, _)| i)
-            .collect();
+        self.sort_refs(&mut refs);
+        refs
+    }
+
+    /// Order `refs` by the active sort/direction, then optionally float completed
+    /// tasks to the bottom. Both passes are stable, so `Sort::Manual` is a no-op
+    /// and preserves the natural (insertion) order.
+    fn sort_refs(&self, refs: &mut [TaskRef]) {
+        let task = |r: &TaskRef| &self.lists[r.list].tasks[r.task];
         if self.sort != Sort::Manual {
-            indices.sort_by(|&a, &b| {
-                let ord = self.sort.compare(&list.tasks[a], &list.tasks[b]);
+            refs.sort_by(|a, b| {
+                let ord = self.sort.compare(task(a), task(b));
                 match self.sort_dir {
                     SortDir::Ascending => ord,
                     SortDir::Descending => ord.reverse(),
                 }
             });
         }
-        // Optionally float completed tasks to the bottom. `sort_by_key` is
-        // stable and `false < true`, so not-done tasks keep their (sorted)
-        // position and done ones trail them in their existing relative order.
         if self.completed_to_bottom {
-            indices.sort_by_key(|&i| list.tasks[i].done);
+            refs.sort_by_key(|r| task(r).done);
         }
-        indices
     }
 
-    /// Raw index (into `tasks`) of the currently selected task.
-    pub fn current_task_index(&self) -> Option<usize> {
-        self.visible_task_indices()
+    /// Task indices (into their list's `tasks`) of the visible tasks. Kept for
+    /// the list view and for callers/tests that predate the tag view; there the
+    /// returned indices point into different lists, so prefer
+    /// [`visible_task_refs`](Self::visible_task_refs).
+    pub fn visible_task_indices(&self) -> Vec<usize> {
+        self.visible_task_refs().iter().map(|r| r.task).collect()
+    }
+
+    /// The `(list, task)` reference of the currently selected task.
+    pub fn current_task_ref(&self) -> Option<TaskRef> {
+        self.visible_task_refs()
             .get(self.selected_visible_task())
             .copied()
     }
 
+    /// Raw index (into its list's `tasks`) of the selected task. See
+    /// [`current_task_ref`](Self::current_task_ref) for the full reference.
+    pub fn current_task_index(&self) -> Option<usize> {
+        self.current_task_ref().map(|r| r.task)
+    }
+
     pub fn current_task(&self) -> Option<&Task> {
-        let idx = self.current_task_index()?;
-        self.current_list()?.tasks.get(idx)
+        let r = self.current_task_ref()?;
+        self.lists.get(r.list)?.tasks.get(r.task)
+    }
+
+    /// `(active, done, overdue)` task counts for the current scope — the selected
+    /// list, or every task carrying the selected tag — for the header summary.
+    pub fn header_stats(&self, today: chrono::NaiveDate) -> (usize, usize, usize) {
+        let tally = |(a, d, o): (usize, usize, usize), t: &Task| {
+            (
+                a + usize::from(!t.done),
+                d + usize::from(t.done),
+                o + usize::from(t.is_overdue(today)),
+            )
+        };
+        match self.current_view() {
+            Some(View::List(li)) => match self.lists.get(li) {
+                Some(l) => l.tasks.iter().fold((0, 0, 0), tally),
+                None => (0, 0, 0),
+            },
+            Some(View::Tag(tag)) => self
+                .lists
+                .iter()
+                .filter(|l| !l.is_archive())
+                .flat_map(|l| l.tasks.iter())
+                .filter(|t| t.tags.contains(&tag))
+                .fold((0, 0, 0), tally),
+            None => (0, 0, 0),
+        }
+    }
+
+    /// A stable identity for the selected sidebar row, so it can be re-found
+    /// after an edit adds or removes rows.
+    fn selected_entry_key(&self) -> Option<EntryKey> {
+        match self.selected_row()? {
+            SidebarRow::List(li) => Some(EntryKey::List(self.lists[li].slug.clone())),
+            SidebarRow::Tag(name) => Some(EntryKey::Tag(name)),
+        }
+    }
+
+    /// Re-select the row identified by `key` after a mutation that may have added
+    /// or removed rows (e.g. a tag appearing or disappearing). Falls back to the
+    /// nearest selectable row when the entry is gone (a tag whose last task left),
+    /// and to nothing when the sidebar is empty.
+    fn reselect_entry(&mut self, key: Option<EntryKey>) {
+        let rows = self.sidebar_rows();
+        if rows.is_empty() {
+            self.list_state.select(None);
+            return;
+        }
+        let found = key.and_then(|k| {
+            rows.iter().position(|row| match (&k, row) {
+                (EntryKey::List(slug), SidebarRow::List(li)) => &self.lists[*li].slug == slug,
+                (EntryKey::Tag(a), SidebarRow::Tag(b)) => a == b,
+                _ => false,
+            })
+        });
+        // Entry gone (e.g. a tag whose last task left): clamp the old position
+        // into the new, shorter row range.
+        let idx =
+            found.unwrap_or_else(|| self.list_state.selected().unwrap_or(0).min(rows.len() - 1));
+        self.list_state.select(Some(idx));
     }
 
     pub fn selected_subtask(&self) -> Option<usize> {
@@ -684,11 +918,90 @@ impl App {
 
     // --- navigation ----------------------------------------------------------
 
-    pub fn toggle_focus(&mut self) {
-        self.focus = match self.focus {
-            Focus::Lists => Focus::Tasks,
-            Focus::Tasks => Focus::Lists,
+    /// Which region currently has focus, treating the two sidebar panes as
+    /// distinct: a tag row selected means the Tags section, otherwise Lists.
+    fn current_section(&self) -> Section {
+        if self.focus == Focus::Tasks {
+            Section::Tasks
+        } else if matches!(self.selected_row(), Some(SidebarRow::Tag(_))) {
+            Section::Tags
+        } else {
+            Section::Lists
+        }
+    }
+
+    /// Cycle focus through the three regions in `Tab` order — Lists → Tags →
+    /// Tasks and back — with `forward` reversed by Shift+Tab. Tags are skipped
+    /// when none exist, so it degrades to the old Lists ↔ Tasks toggle. Your
+    /// place in each sidebar section is remembered and restored.
+    pub fn cycle_focus(&mut self, forward: bool) {
+        // Snapshot where we are in the section we're leaving, from the live
+        // cursor (so any j/k movement is captured), before moving on.
+        match self.current_section() {
+            Section::Lists => {
+                if let Some(i) = self.selected_list_index() {
+                    self.last_list_row = i;
+                }
+            }
+            Section::Tags => {
+                if let Some(i) = self.list_state.selected() {
+                    self.last_tag_row = i.saturating_sub(self.lists.len());
+                }
+            }
+            Section::Tasks => {}
+        }
+
+        let order: &[Section] = if self.all_tags().is_empty() {
+            &[Section::Lists, Section::Tasks]
+        } else {
+            &[Section::Lists, Section::Tags, Section::Tasks]
         };
+        let pos = order
+            .iter()
+            .position(|s| *s == self.current_section())
+            .unwrap_or(0);
+        let len = order.len();
+        let next = if forward {
+            (pos + 1) % len
+        } else {
+            (pos + len - 1) % len
+        };
+        self.enter_section(order[next]);
+    }
+
+    /// Move focus (and, for the sidebar sections, the cursor) into `section`,
+    /// restoring the remembered position there.
+    fn enter_section(&mut self, section: Section) {
+        match section {
+            Section::Lists => {
+                self.focus = Focus::Lists;
+                if self.lists.is_empty() {
+                    self.list_state.select(None);
+                } else {
+                    let idx = self.last_list_row.min(self.lists.len() - 1);
+                    self.set_sidebar_row_reset(idx);
+                }
+            }
+            Section::Tags => {
+                self.focus = Focus::Lists;
+                let n = self.all_tags().len();
+                if n > 0 {
+                    let idx = self.lists.len() + self.last_tag_row.min(n - 1);
+                    self.set_sidebar_row_reset(idx);
+                }
+            }
+            Section::Tasks => self.focus_tasks(),
+        }
+    }
+
+    /// Select sidebar row `idx`, resetting the task cursor only when the row
+    /// actually changes — so cycling away and back to the same list keeps your
+    /// place in its task list.
+    fn set_sidebar_row_reset(&mut self, idx: usize) {
+        if self.list_state.selected() != Some(idx) {
+            self.list_state.select(Some(idx));
+            self.task_state.select(Some(0));
+        }
     }
 
     pub fn move_selection(&mut self, delta: isize) {
@@ -702,11 +1015,13 @@ impl App {
     }
 
     fn move_list(&mut self, delta: isize) {
-        let len = self.lists.len();
+        // One flat cursor runs through the lists then the tags, so `j`/`k` flow
+        // straight from the last list into the tag pane.
+        let len = self.sidebar_rows().len();
         if len == 0 {
             return;
         }
-        let cur = self.selected_list() as isize;
+        let cur = self.list_state.selected().unwrap_or(0) as isize;
         let next = (cur + delta).clamp(0, len as isize - 1) as usize;
         self.list_state.select(Some(next));
         self.task_state.select(Some(0));
@@ -747,6 +1062,16 @@ impl App {
 
     pub fn select_list_index(&mut self, idx: usize) {
         if idx < self.lists.len() {
+            self.list_state.select(Some(idx));
+            self.task_state.select(Some(0));
+            self.focus = Focus::Lists;
+        }
+    }
+
+    /// Select a sidebar row by its flat index (used by the mouse handler, which
+    /// clicks either the lists pane or the tags pane). Out-of-range is ignored.
+    pub fn select_sidebar_row(&mut self, idx: usize) {
+        if idx < self.sidebar_rows().len() {
             self.list_state.select(Some(idx));
             self.task_state.select(Some(0));
             self.focus = Focus::Lists;
@@ -804,15 +1129,19 @@ impl App {
     }
 
     /// Run `f` against the currently selected task and persist; returns false
-    /// if there is no current task.
+    /// if there is no current task. Works across the tag view because the task
+    /// is located by its full `(list, task)` reference.
     fn with_current_task<F: FnOnce(&mut Task)>(&mut self, f: F) -> bool {
-        let li = self.selected_list();
-        let Some(ti) = self.current_task_index() else {
+        let Some(r) = self.current_task_ref() else {
             return false;
         };
-        if let Some(task) = self.lists.get_mut(li).and_then(|l| l.tasks.get_mut(ti)) {
+        if let Some(task) = self
+            .lists
+            .get_mut(r.list)
+            .and_then(|l| l.tasks.get_mut(r.task))
+        {
             f(task);
-            self.save_list_at(li);
+            self.save_list_at(r.list);
             true
         } else {
             false
@@ -873,7 +1202,11 @@ impl App {
         if parsed.title.is_empty() {
             return;
         }
-        let li = self.selected_list();
+        // A task needs a home list; the tag view has no single one to add to.
+        let Some(li) = self.selected_list_index() else {
+            self.set_status("select a list to add a task".to_string());
+            return;
+        };
         if let Some(list) = self.lists.get_mut(li) {
             let mut task = Task::new(parsed.title);
             task.priority = parsed.priority;
@@ -893,8 +1226,6 @@ impl App {
                 self.task_state.select(Some(pos));
             }
             self.focus = Focus::Tasks;
-        } else {
-            self.set_status("create a list first (A)".to_string());
         }
     }
 
@@ -927,7 +1258,13 @@ impl App {
 
     pub fn set_current_tags(&mut self, input: &str) {
         let tags = model::parse_tags(input);
+        // Editing tags can add or remove sidebar tag rows (and, in the tag view,
+        // remove the current task from the visible set), so re-anchor both the
+        // sidebar selection and the task cursor afterwards.
+        let key = self.selected_entry_key();
         self.with_current_task(|t| t.tags = tags);
+        self.reselect_entry(key);
+        self.clamp_task_selection();
     }
 
     /// Set (or, on empty input, clear) the selected task's story points. A
@@ -953,31 +1290,26 @@ impl App {
     }
 
     pub fn delete_current_task(&mut self) {
-        let li = self.selected_list();
-        let Some(ti) = self.current_task_index() else {
+        let Some(r) = self.current_task_ref() else {
             return;
         };
-        if let Some(list) = self.lists.get_mut(li)
-            && ti < list.tasks.len()
+        let key = self.selected_entry_key();
+        if let Some(list) = self.lists.get_mut(r.list)
+            && r.task < list.tasks.len()
         {
-            list.tasks.remove(ti);
-            self.save_list_at(li);
-            // Clamp visible selection.
-            let visible = self.visible_task_indices().len();
-            if visible == 0 {
-                self.task_state.select(None);
-            } else {
-                let cur = self.selected_visible_task().min(visible - 1);
-                self.task_state.select(Some(cur));
-            }
+            list.tasks.remove(r.task);
+            self.save_list_at(r.list);
         }
+        // The removed task may have carried the last use of a tag; re-anchor the
+        // sidebar, then clamp the task cursor into the new visible set.
+        self.reselect_entry(key);
+        self.clamp_task_selection();
     }
 
     pub fn delete_current_list(&mut self) {
-        let li = self.selected_list();
-        if li >= self.lists.len() {
+        let Some(li) = self.selected_list_index() else {
             return;
-        }
+        };
         let list = self.lists.remove(li);
         if let Err(e) = storage::delete_list_file(&self.data_dir, &list) {
             self.set_status(format!("delete error: {e}"));
@@ -1062,24 +1394,26 @@ impl App {
     /// on first use) and persist both. Reversible via `m`, so no confirm. No-op
     /// when there's no current task or it already lives in the archive.
     pub fn archive_current_task(&mut self) {
-        let src = self.selected_list();
-        if self.lists.get(src).is_some_and(|l| l.is_archive()) {
+        let Some(r) = self.current_task_ref() else {
+            return;
+        };
+        if self.lists[r.list].is_archive() {
             self.set_status("already archived — X deletes, m moves it out".to_string());
             return;
         }
-        let Some(ti) = self.current_task_index() else {
-            return;
-        };
+        let key = self.selected_entry_key();
         self.ensure_archive();
         let Some(dest) = self.archive_index() else {
             return;
         };
-        let task = self.lists[src].tasks.remove(ti);
+        let task = self.lists[r.list].tasks.remove(r.task);
         let title = task.title.clone();
         self.lists[dest].tasks.push(task);
-        self.save_list_at(src);
+        self.save_list_at(r.list);
         self.save_list_at(dest);
-        // Clamp the source selection now that a task is gone.
+        // Archiving removes the task from every real list, so a tag it carried
+        // may vanish; re-anchor the sidebar, then clamp the task cursor.
+        self.reselect_entry(key);
         let visible = self.visible_task_indices().len();
         if visible == 0 {
             self.task_state.select(None);
@@ -1145,7 +1479,12 @@ impl App {
         if self.focus != Focus::Lists || self.in_detail() {
             return;
         }
-        let cur = self.selected_list();
+        // Only real list rows reorder; a tag row (or nothing) is a no-op. Since
+        // list rows occupy indices 0..lists.len(), the target can't land on a
+        // tag or header row.
+        let Some(cur) = self.selected_list_index() else {
+            return;
+        };
         let target = cur as isize + delta;
         if target < 0 || target >= self.lists.len() as isize {
             return;
@@ -1168,21 +1507,29 @@ impl App {
     /// it stays intuitive under a filter; a no-op at the ends, off the task
     /// pane, or in a task's detail view.
     pub fn reorder_task(&mut self, delta: isize) {
-        if self.focus != Focus::Tasks || self.in_detail() || self.reorder_blocked_by_sort() {
+        if self.focus != Focus::Tasks || self.in_detail() {
             return;
         }
-        let vis = self.visible_task_indices();
+        // Reordering only makes sense inside a single list; the cross-list tag
+        // view has no stored order to nudge.
+        let Some(li) = self.selected_list_index() else {
+            self.set_status("reordering works inside a single list".to_string());
+            return;
+        };
+        if self.reorder_blocked_by_sort() {
+            return;
+        }
+        let vis = self.visible_task_refs();
         let v = self.selected_visible_task();
         let target = v as isize + delta;
         if target < 0 || target >= vis.len() as isize {
             return;
         }
         let target = target as usize;
-        let li = self.selected_list();
         let Some(list) = self.lists.get_mut(li) else {
             return;
         };
-        list.tasks.swap(vis[v], vis[target]);
+        list.tasks.swap(vis[v].task, vis[target].task);
         self.save_list_at(li);
         self.task_state.select(Some(target));
     }
@@ -1191,19 +1538,29 @@ impl App {
     /// and persist. A no-op with fewer than two visible tasks, off the task
     /// pane, or in detail view.
     pub fn send_task(&mut self, to_top: bool) {
-        if self.focus != Focus::Tasks || self.in_detail() || self.reorder_blocked_by_sort() {
+        if self.focus != Focus::Tasks || self.in_detail() {
             return;
         }
-        let vis = self.visible_task_indices();
+        let Some(li) = self.selected_list_index() else {
+            self.set_status("reordering works inside a single list".to_string());
+            return;
+        };
+        if self.reorder_blocked_by_sort() {
+            return;
+        }
+        let vis = self.visible_task_refs();
         if vis.len() < 2 {
             return;
         }
-        let from = vis[self.selected_visible_task()];
+        let from = vis[self.selected_visible_task()].task;
         // Insertion point (raw index) once `from` is spliced out: the current
         // first visible slot for a hoist, the current last for a sink. Both stay
         // valid after the removal because `from` lies within [first, last].
-        let dest = if to_top { vis[0] } else { *vis.last().unwrap() };
-        let li = self.selected_list();
+        let dest = if to_top {
+            vis[0].task
+        } else {
+            vis.last().unwrap().task
+        };
         let Some(list) = self.lists.get_mut(li) else {
             return;
         };
@@ -1219,10 +1576,10 @@ impl App {
     /// Open the picker to move the selected task elsewhere. No-op when there is
     /// no current task; sets a hint when there is no other list to move to.
     pub fn start_move_task(&mut self) {
-        if self.current_task().is_none() {
+        let Some(r) = self.current_task_ref() else {
             return;
-        }
-        let src = self.selected_list();
+        };
+        let src = r.list;
         // Archiving has its own key (`d`), so keep the Archived list out of the
         // move picker. Moving *out* of it (to a real list) is how you unarchive.
         let targets: Vec<usize> = (0..self.lists.len())
@@ -1258,19 +1615,20 @@ impl App {
             Mode::MovePicker(state) => state.targets.get(state.selected).copied(),
             _ => return,
         };
-        let src = self.selected_list();
-        let ti = self.current_task_index();
-        let (Some(target), Some(ti)) = (target, ti) else {
+        let key = self.selected_entry_key();
+        let (Some(target), Some(r)) = (target, self.current_task_ref()) else {
             self.mode = Mode::Normal;
             return;
         };
-        let task = self.lists[src].tasks.remove(ti);
+        let task = self.lists[r.list].tasks.remove(r.task);
         let title = task.title.clone();
         let dest = self.lists[target].name.clone();
         self.lists[target].tasks.push(task);
-        self.save_list_at(src);
+        self.save_list_at(r.list);
         self.save_list_at(target);
-        // Clamp the source selection now that a task is gone.
+        // The tag set is unchanged (the task keeps its tags), but re-anchor the
+        // sidebar for safety, then clamp the task cursor.
+        self.reselect_entry(key);
         let visible = self.visible_task_indices().len();
         if visible == 0 {
             self.task_state.select(None);
@@ -1415,9 +1773,9 @@ impl App {
     /// Flip the sort direction. Works from inside the picker (live preview
     /// behind the overlay) or standalone; the selected task stays put.
     pub fn toggle_sort_dir(&mut self) {
-        let current_raw = self.current_task_index();
+        let current = self.current_task_ref();
         self.sort_dir = self.sort_dir.toggle();
-        self.keep_task_selected(current_raw);
+        self.keep_task_selected(current);
         if self.sort == Sort::Manual {
             self.set_status(format!(
                 "sort direction: {} (pick a sort to apply)",
@@ -1449,17 +1807,19 @@ impl App {
     /// Set the active sort, keeping the same task selected across the re-order
     /// so the cursor doesn't jump to whatever happens to land in its old slot.
     pub fn set_sort(&mut self, sort: Sort) {
-        let current_raw = self.current_task_index();
+        let current = self.current_task_ref();
         self.sort = sort;
-        self.keep_task_selected(current_raw);
+        self.keep_task_selected(current);
         self.announce_sort();
     }
 
-    /// Re-select the task at raw index `current_raw` after a re-order, falling
-    /// back to a clamped selection if it is no longer visible.
-    fn keep_task_selected(&mut self, current_raw: Option<usize>) {
-        if let Some(raw) = current_raw
-            && let Some(pos) = self.visible_task_indices().iter().position(|&i| i == raw)
+    /// Re-select task `current` after a re-order, falling back to a clamped
+    /// selection if it is no longer visible. Matching on the full `(list, task)`
+    /// reference keeps this correct in the tag view, where a bare task index
+    /// could collide across lists.
+    fn keep_task_selected(&mut self, current: Option<TaskRef>) {
+        if let Some(r) = current
+            && let Some(pos) = self.visible_task_refs().iter().position(|&x| x == r)
         {
             self.task_state.select(Some(pos));
         } else {
@@ -1590,6 +1950,11 @@ impl App {
             self.set_status("create a list first (A)".to_string());
             return;
         }
+        // A tag row (or focus without a list) has no single list to add to.
+        if self.selected_list_index().is_none() {
+            self.set_status("select a list to add a task".to_string());
+            return;
+        }
         self.mode = Mode::Input(InputState::new(
             InputField::NewTask,
             "New task  ·  !! #tag @today  n:note  s:sub, sub",
@@ -1620,8 +1985,13 @@ impl App {
 
     pub fn start_edit(&mut self) {
         // With the lists pane focused (and not in a task's detail view), `e`
-        // renames the list rather than editing a task title.
+        // renames the list rather than editing a task title. A tag row has no
+        // name of its own to rename.
         if !self.in_detail() && self.focus == Focus::Lists {
+            if self.selected_list_index().is_none() {
+                self.set_status("tags follow your tasks — nothing to rename here".to_string());
+                return;
+            }
             self.start_rename_list();
             return;
         }
@@ -1756,6 +2126,10 @@ impl App {
         match self.focus {
             Focus::Lists => {
                 let Some(list) = self.current_list() else {
+                    // A tag row is selected (tags aren't a deletable entity).
+                    self.set_status(
+                        "tags can't be deleted — clear the tag from its tasks".to_string(),
+                    );
                     return;
                 };
                 if list.is_archive() {

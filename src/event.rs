@@ -114,7 +114,8 @@ fn dispatch(app: &mut App, action: Action) {
                 app.clear_filter();
             }
         }
-        Action::ToggleFocus => app.toggle_focus(),
+        Action::ToggleFocus => app.cycle_focus(true),
+        Action::FocusPrev => app.cycle_focus(false),
         // Pane focus is meaningless inside a task's detail view.
         Action::FocusLists if !detail => app.focus_lists(),
         Action::FocusTasks if !detail => app.focus_tasks(),
@@ -337,8 +338,18 @@ pub fn handle_mouse(app: &mut App, m: MouseEvent) {
             if let Some((rect, offset)) = app.clickables.lists_inner
                 && hit(rect, col, row)
             {
+                // Lists occupy the first rows of the flat sidebar order, so the
+                // clicked row *is* the flat index.
                 let idx = offset + (row - rect.y) as usize;
-                app.select_list_index(idx);
+                app.select_sidebar_row(idx);
+                return;
+            }
+            if let Some((rect, offset)) = app.clickables.tags_inner
+                && hit(rect, col, row)
+            {
+                // Tag rows follow the lists in the flat order.
+                let local = offset + (row - rect.y) as usize;
+                app.select_sidebar_row(app.lists.len() + local);
                 return;
             }
             if let Some((rect, offset)) = app.clickables.tasks_inner

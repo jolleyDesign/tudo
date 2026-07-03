@@ -32,6 +32,7 @@ pub type Overrides = BTreeMap<String, Vec<String>>;
 pub enum Action {
     // Navigate
     ToggleFocus,
+    FocusPrev,
     FocusLists,
     FocusTasks,
     MoveDown,
@@ -71,8 +72,9 @@ pub enum Action {
 
 impl Action {
     /// All actions, in canonical order.
-    pub const ALL: [Action; 32] = [
+    pub const ALL: [Action; 33] = [
         Action::ToggleFocus,
+        Action::FocusPrev,
         Action::FocusLists,
         Action::FocusTasks,
         Action::MoveDown,
@@ -110,6 +112,7 @@ impl Action {
     pub fn config_name(self) -> &'static str {
         match self {
             Action::ToggleFocus => "toggle-focus",
+            Action::FocusPrev => "focus-prev",
             Action::FocusLists => "focus-lists",
             Action::FocusTasks => "focus-tasks",
             Action::MoveDown => "move-down",
@@ -156,6 +159,12 @@ impl Action {
         let c = KeyChord::plain;
         match self {
             Action::ToggleFocus => vec![c(KeyCode::Tab)],
+            // Shift+Tab reaches us as BackTab on most terminals, but some send
+            // Tab with the Shift modifier — accept both.
+            Action::FocusPrev => vec![
+                c(KeyCode::BackTab),
+                KeyChord::new(KeyCode::Tab, KeyModifiers::SHIFT),
+            ],
             Action::FocusLists => vec![c(KeyCode::Char('h')), c(KeyCode::Left)],
             Action::FocusTasks => vec![c(KeyCode::Char('l')), c(KeyCode::Right)],
             Action::MoveDown => vec![c(KeyCode::Char('j')), c(KeyCode::Down)],
@@ -213,7 +222,10 @@ impl KeyChord {
     /// Build a normalized chord from a code and modifier set.
     pub fn new(code: KeyCode, mods: KeyModifiers) -> Self {
         let mut mods = mods & (KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SHIFT);
-        if matches!(code, KeyCode::Char(_)) {
+        // A character key's case already encodes Shift, and BackTab already *is*
+        // Shift+Tab — some terminals still tack a Shift modifier onto it, so drop
+        // the redundant flag to keep the chord canonical.
+        if matches!(code, KeyCode::Char(_) | KeyCode::BackTab) {
             mods.remove(KeyModifiers::SHIFT);
         }
         Self { code, mods }
@@ -297,6 +309,7 @@ fn parse_code(s: &str) -> Option<KeyCode> {
     Some(match s.to_lowercase().as_str() {
         "space" | "spc" => KeyCode::Char(' '),
         "tab" => KeyCode::Tab,
+        "backtab" => KeyCode::BackTab,
         "enter" | "return" | "cr" => KeyCode::Enter,
         "esc" | "escape" => KeyCode::Esc,
         "up" => KeyCode::Up,
@@ -328,6 +341,7 @@ fn code_label(code: KeyCode) -> String {
         KeyCode::Char(' ') => "Space".to_string(),
         KeyCode::Char(c) => c.to_string(),
         KeyCode::Tab => "Tab".to_string(),
+        KeyCode::BackTab => "\u{21e7}Tab".to_string(), // ⇧Tab
         KeyCode::Enter => "Enter".to_string(),
         KeyCode::Esc => "Esc".to_string(),
         KeyCode::Up => "\u{2191}".to_string(),    // ↑
@@ -352,6 +366,7 @@ fn code_token(code: KeyCode) -> String {
         KeyCode::Char(' ') => "space".to_string(),
         KeyCode::Char(c) => c.to_string(),
         KeyCode::Tab => "tab".to_string(),
+        KeyCode::BackTab => "backtab".to_string(),
         KeyCode::Enter => "enter".to_string(),
         KeyCode::Esc => "esc".to_string(),
         KeyCode::Up => "up".to_string(),

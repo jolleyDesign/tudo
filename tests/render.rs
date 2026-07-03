@@ -97,6 +97,34 @@ fn quick_add_input_highlights_its_markers() {
 }
 
 #[test]
+fn tag_view_shows_tags_sidebar_and_cross_list_pane() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = App::new(Some(dir.path().to_path_buf())).unwrap();
+    app.add_list("Work".to_string());
+    app.add_task("Ship the TUI #urgent".to_string());
+
+    // A "Tags" section with the tag appears beneath the lists.
+    let text = render_to_string(&mut app, 100, 30);
+    assert!(text.contains("Tags"), "tags section header missing: {text}");
+    assert!(text.contains("#urgent"), "tag row missing: {text}");
+
+    // Selecting the tag row switches the pane to the cross-list view, which
+    // names the tag and labels each task with its home list.
+    let row = app
+        .sidebar_rows()
+        .iter()
+        .position(|r| matches!(r, tudo::app::SidebarRow::Tag(t) if t == "urgent"))
+        .unwrap();
+    app.select_sidebar_row(row);
+    let text = render_to_string(&mut app, 100, 30);
+    assert!(
+        text.contains("#urgent (all lists)"),
+        "tag-view title missing: {text}"
+    );
+    assert!(text.contains("· Work"), "origin-list label missing: {text}");
+}
+
+#[test]
 fn first_run_screen_is_shown_without_data_dir() {
     let mut app = App::new(None).unwrap();
     let text = render_to_string(&mut app, 100, 30);

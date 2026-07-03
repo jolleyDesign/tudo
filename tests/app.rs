@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use tudo::app::{App, CopyWhat, InputField, Mode, StatusFilter};
+use tudo::app::{App, CopyWhat, Focus, InputField, Mode, SidebarRow, StatusFilter, View};
 use tudo::keybind::{Keymap, Overrides};
 use tudo::model::{Priority, Sort, SortDir};
 use tudo::theme::ThemeKind;
@@ -978,12 +978,12 @@ fn config_round_trips_keybindings() {
 
 // --- sort -------------------------------------------------------------------
 
-/// The titles of the currently visible tasks, in display order.
+/// The titles of the currently visible tasks, in display order. Works in both
+/// the list view and the cross-list tag view.
 fn visible_titles(app: &App) -> Vec<String> {
-    let list = app.current_list().unwrap();
-    app.visible_task_indices()
+    app.visible_task_refs()
         .iter()
-        .map(|&i| list.tasks[i].title.clone())
+        .map(|r| app.lists[r.list].tasks[r.task].title.clone())
         .collect()
 }
 
@@ -1253,4 +1253,264 @@ fn sort_picker_flip_key_and_points_quick_key() {
     assert!(matches!(app.mode, Mode::Normal));
     assert_eq!(app.sort, Sort::Points);
     assert_eq!(app.sort_dir, SortDir::Descending);
+}
+
+// --- cross-list tag view -------------------------------------------------
+
+/// Rendered index of the sidebar row for tag `name`.
+fn tag_row(app: &App, name: &str) -> usize {
+    app.sidebar_rows()
+        .iter()
+        .position(|r| matches!(r, SidebarRow::Tag(t) if t == name))
+        .unwrap_or_else(|| panic!("tag row #{name} not found in sidebar"))
+}
+
+#[test]
+fn tags_appear_in_the_sidebar_with_cross_list_counts() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app_in(dir.path());
+    // add_list sorts by name: Alpha = 0, Beta = 1.
+    app.add_list("Alpha".to_string());
+    app.add_list("Beta".to_string());
+
+    app.select_list_index(0);
+    app.add_task("a #x".to_string());
+    app.select_list_index(1);
+    app.add_task("b #x".to_string());
+    app.add_task("c #y".to_string());
+
+    // The flat sidebar order is every list, then the sorted union of tags.
+    assert_eq!(
+        app.sidebar_rows(),
+        vec![
+            SidebarRow::List(0),
+            SidebarRow::List(1),
+            SidebarRow::Tag("x".to_string()),
+            SidebarRow::Tag("y".to_string()),
+        ]
+    );
+    // Counts span lists (x is on a task in each of Alpha and Beta).
+    assert_eq!(app.tag_counts("x"), (2, 2));
+    assert_eq!(app.tag_counts("y"), (1, 1));
+}
+
+#[test]
+fn tag_view_shows_matching_tasks_from_every_list() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app_in(dir.path());
+    app.add_list("Alpha".to_string());
+    app.add_list("Beta".to_string());
+    app.select_list_index(0);
+    app.add_task("a #x".to_string());
+    app.add_task("skip me".to_string());
+    app.select_list_index(1);
+    app.add_task("b #x".to_string());
+
+    app.select_sidebar_row(tag_row(&app, "x"));
+    assert_eq!(app.current_view(), Some(View::Tag("x".to_string())));
+    // Only the tagged tasks, spanning both lists, in list-then-task order.
+    assert_eq!(visible_titles(&app), ["a", "b"]);
+}
+
+#[test]
+fn editing_a_task_in_the_tag_view_persists_to_its_home_list() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app_in(dir.path());
+    app.add_list("Alpha".to_string());
+    app.add_list("Beta".to_string());
+    app.select_list_index(0);
+    app.add_task("a #x".to_string());
+    app.select_list_index(1);
+    app.add_task("b #x".to_string());
+
+    app.select_sidebar_row(tag_row(&app, "x"));
+    // Complete "a" (from Alpha) and prioritise "b" (from Beta) from the tag view.
+    app.select_task_visible(0);
+    app.toggle_current_done();
+    app.select_task_visible(1);
+    app.cycle_current_priority();
+
+    // Both edits land on the right home list and survive a reload from disk.
+    let reloaded = app_in(dir.path());
+    let alpha = reloaded.lists.iter().find(|l| l.name == "Alpha").unwrap();
+    let beta = reloaded.lists.iter().find(|l| l.name == "Beta").unwrap();
+    assert!(alpha.tasks[0].done, "Alpha's task should be done");
+    assert_eq!(beta.tasks[0].priority, Some(Priority::Low));
+}
+
+#[test]
+fn clearing_the_last_use_of_a_tag_drops_it_and_reselects_safely() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app_in(dir.path());
+    app.add_list("L".to_string());
+    app.add_task("t #z".to_string());
+
+    // View the tag, then strip it from its only task.
+    app.select_sidebar_row(tag_row(&app, "z"));
+    assert_eq!(app.current_view(), Some(View::Tag("z".to_string())));
+    app.set_current_tags("");
+
+    // The tag is gone from the sidebar and the selection falls back to the list.
+    assert!(app.all_tags().is_empty());
+    assert!(
+        !app.sidebar_rows()
+            .iter()
+            .any(|r| matches!(r, SidebarRow::Tag(_)))
+    );
+    assert_eq!(app.current_view(), Some(View::List(0)));
+}
+
+#[test]
+fn sidebar_navigation_flows_from_lists_into_tags() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app_in(dir.path());
+    app.add_list("Alpha".to_string());
+    app.add_list("Beta".to_string());
+    app.select_list_index(0);
+    app.add_task("a #x".to_string());
+
+    // The single cursor runs off the last list straight onto the first tag.
+    app.select_list_index(1);
+    app.move_selection(1);
+    assert_eq!(app.current_view(), Some(View::Tag("x".to_string())));
+    // ...and back up onto the list.
+    app.move_selection(-1);
+    assert_eq!(app.selected_list_index(), Some(1));
+}
+
+#[test]
+fn adding_a_task_is_refused_in_the_tag_view() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app_in(dir.path());
+    app.add_list("L".to_string());
+    app.add_task("t #x".to_string());
+
+    app.select_sidebar_row(tag_row(&app, "x"));
+    // The picker never opens...
+    app.start_add_task();
+    assert!(matches!(app.mode, Mode::Normal));
+    assert!(!app.status.is_empty());
+    // ...and a direct add is a no-op (still one task, still just #x).
+    app.add_task("nope".to_string());
+    assert_eq!(app.lists[0].tasks.len(), 1);
+}
+
+#[test]
+fn status_filter_composes_with_the_tag_view() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app_in(dir.path());
+    app.add_list("L".to_string());
+    app.add_task("a #x".to_string());
+    app.add_task("b #x".to_string());
+
+    // Mark "b" done, then view tag x.
+    app.select_task_visible(1);
+    app.toggle_current_done();
+    app.select_sidebar_row(tag_row(&app, "x"));
+    assert_eq!(visible_titles(&app), ["a", "b"]);
+
+    // The status filter narrows the cross-list set just like in a list.
+    app.cycle_status_filter(); // -> active
+    assert_eq!(visible_titles(&app), ["a"]);
+    app.cycle_status_filter(); // -> completed
+    assert_eq!(visible_titles(&app), ["b"]);
+}
+
+#[test]
+fn tab_cycles_lists_tags_tasks_and_shift_tab_reverses() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app_in(dir.path());
+    app.add_list("Work".to_string());
+    app.add_task("t #x".to_string());
+
+    // Start on the list in the sidebar (add_task leaves focus on Tasks).
+    app.focus_lists();
+    app.select_list_index(0);
+    assert_eq!(app.current_view(), Some(View::List(0)));
+
+    // Tab forward: Lists → Tags → Tasks → Lists.
+    app.cycle_focus(true);
+    assert_eq!(app.focus, Focus::Lists);
+    assert_eq!(app.current_view(), Some(View::Tag("x".to_string())));
+    app.cycle_focus(true);
+    assert_eq!(app.focus, Focus::Tasks);
+    app.cycle_focus(true);
+    assert_eq!(app.focus, Focus::Lists);
+    assert_eq!(app.current_view(), Some(View::List(0)));
+
+    // Shift+Tab reverses: from Lists straight to Tasks (its backward neighbour).
+    app.cycle_focus(false);
+    assert_eq!(app.focus, Focus::Tasks);
+}
+
+#[test]
+fn tab_skips_the_tags_section_when_there_are_none() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app_in(dir.path());
+    app.add_list("Work".to_string());
+    app.add_task("no tags here".to_string());
+    app.focus_lists();
+    app.select_list_index(0);
+
+    // Only two stops, so it behaves like the old Lists ↔ Tasks toggle.
+    app.cycle_focus(true);
+    assert_eq!(app.focus, Focus::Tasks);
+    app.cycle_focus(true);
+    assert_eq!(app.focus, Focus::Lists);
+    assert_eq!(app.current_view(), Some(View::List(0)));
+}
+
+#[test]
+fn cycling_focus_restores_your_place_in_each_sidebar_section() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app_in(dir.path());
+    app.add_list("Alpha".to_string());
+    app.add_list("Beta".to_string());
+    app.select_list_index(0);
+    app.add_task("a #x".to_string());
+
+    // Sit on Beta (list 1), then cycle all the way around.
+    app.focus_lists();
+    app.select_list_index(1);
+    app.cycle_focus(true); // → Tags
+    assert_eq!(app.current_view(), Some(View::Tag("x".to_string())));
+    app.cycle_focus(true); // → Tasks
+    app.cycle_focus(true); // → Lists, and back on Beta, not Alpha
+    assert_eq!(app.current_view(), Some(View::List(1)));
+}
+
+#[test]
+fn tab_and_backtab_keys_drive_the_focus_cycle() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app_in(dir.path());
+    app.add_list("Work".to_string());
+    app.add_task("t #x".to_string());
+    app.focus_lists();
+    app.select_list_index(0);
+
+    // Tab forward onto the tag, BackTab (Shift+Tab) reverses back to the list.
+    event::handle_key(&mut app, KeyEvent::from(KeyCode::Tab));
+    assert_eq!(app.current_view(), Some(View::Tag("x".to_string())));
+    event::handle_key(&mut app, KeyEvent::from(KeyCode::BackTab));
+    assert_eq!(app.focus, Focus::Lists);
+    assert_eq!(app.current_view(), Some(View::List(0)));
+}
+
+#[test]
+fn archiving_a_tagged_task_removes_the_tag_from_the_sidebar() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app_in(dir.path());
+    app.add_list("L".to_string());
+    app.add_task("t #x".to_string());
+    assert_eq!(app.all_tags(), vec!["x".to_string()]);
+
+    // Archived tasks are excluded from the tag scope, so the tag disappears.
+    app.focus_tasks();
+    app.archive_selection();
+    assert!(app.all_tags().is_empty());
+    assert!(
+        !app.sidebar_rows()
+            .iter()
+            .any(|r| matches!(r, SidebarRow::Tag(_)))
+    );
 }

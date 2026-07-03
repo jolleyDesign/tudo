@@ -9,11 +9,11 @@ use ratatui::layout::{Alignment, Constraint, Layout, Margin, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{
-    Block, BorderType, Clear, List, ListItem, Padding, Paragraph, Scrollbar, ScrollbarOrientation,
-    ScrollbarState, Wrap,
+    Block, BorderType, Clear, List, ListItem, ListState, Padding, Paragraph, Scrollbar,
+    ScrollbarOrientation, ScrollbarState, Wrap,
 };
 
-use crate::app::{App, Focus, InputField, Mode};
+use crate::app::{App, Focus, InputField, Mode, View};
 use crate::keybind::Action;
 use crate::model::{QuickAddSpan, Sort, Task, quick_add_spans};
 use crate::theme;
@@ -94,15 +94,9 @@ fn render_header(f: &mut Frame, area: Rect, app: &App) {
     f.render_widget(Paragraph::new(title), left);
 
     let today = App::today();
-    let (active, done, overdue) = match app.current_list() {
-        Some(l) => {
-            let a = l.tasks.iter().filter(|t| !t.done).count();
-            let d = l.tasks.len() - a;
-            let o = l.tasks.iter().filter(|t| t.is_overdue(today)).count();
-            (a, d, o)
-        }
-        None => (0, 0, 0),
-    };
+    // Counts follow the current scope: the selected list, or (in the tag view)
+    // every task carrying the tag across all lists.
+    let (active, done, overdue) = app.header_stats(today);
 
     let mut spans = vec![
         Span::styled(
@@ -152,11 +146,13 @@ fn pane_block(title: &str, focused: bool) -> Block<'static> {
 }
 
 fn render_sidebar(f: &mut Frame, area: Rect, app: &mut App) {
-    let focused = matches!(app.mode, Mode::Normal) && app.focus == Focus::Lists;
-    let block = pane_block("Lists", focused);
-    let inner = block.inner(area);
+    let sidebar_focused = matches!(app.mode, Mode::Normal) && app.focus == Focus::Lists;
+    let selected = app.list_state.selected();
+    let n_lists = app.lists.len();
+    let tags = app.all_tags();
 
-    let items: Vec<ListItem> = app
+    // Lists pane items (always present when there are any lists).
+    let list_items: Vec<ListItem> = app
         .lists
         .iter()
         .map(|l| {
@@ -178,47 +174,154 @@ fn render_sidebar(f: &mut Frame, area: Rect, app: &mut App) {
         })
         .collect();
 
-    if items.is_empty() {
-        f.render_widget(block, area);
-        f.render_widget(empty_hint("No lists yet.\nPress A to add one."), inner);
-        app.clickables.lists_inner = None;
+    // No tags: one full-height Lists pane (the original layout).
+    if tags.is_empty() {
+        if list_items.is_empty() {
+            let block = pane_block("Lists", sidebar_focused);
+            let inner = block.inner(area);
+            f.render_widget(block, area);
+            f.render_widget(empty_hint("No lists yet.\nPress A to add one."), inner);
+            app.clickables.lists_inner = None;
+            app.clickables.tags_inner = None;
+            return;
+        }
+        let mut state = ListState::default().with_selected(selected);
+        *state.offset_mut() = prev_offset(app.clickables.lists_inner);
+        let (inner, offset) =
+            render_sidebar_pane(f, area, "Lists", list_items, sidebar_focused, &mut state);
+        app.clickables.lists_inner = Some((inner, offset));
+        app.clickables.tags_inner = None;
         return;
     }
 
+    // With tags present, split the column: Lists on top (priority — it keeps the
+    // remainder, always at least half), Tags pinned to the bottom, capped at
+    // half the height and only as tall as the tags need. Overflowing tags scroll
+    // inside their own pane, so they can never take over the sidebar.
+    let cap = area.height / 2;
+    let tags_needed = (tags.len() as u16).saturating_add(2); // + top/bottom border
+    let tags_h = tags_needed.min(cap).max(3);
+    let [lists_area, tags_area] =
+        Layout::vertical([Constraint::Min(3), Constraint::Length(tags_h)]).areas(area);
+
+    // Which pane holds the cursor decides which one shows the active (accent)
+    // border and highlight; the other stays dim even while the sidebar is focused.
+    let sel_in_lists = selected.is_some_and(|i| i < n_lists);
+
+    let mut lists_state = ListState::default().with_selected(selected.filter(|&i| i < n_lists));
+    *lists_state.offset_mut() = prev_offset(app.clickables.lists_inner);
+    let (lists_inner, lists_off) = render_sidebar_pane(
+        f,
+        lists_area,
+        "Lists",
+        list_items,
+        sidebar_focused && sel_in_lists,
+        &mut lists_state,
+    );
+
+    let tag_items: Vec<ListItem> = tags
+        .iter()
+        .map(|name| {
+            let (open, total) = app.tag_counts(name);
+            ListItem::new(Line::from(vec![
+                Span::styled(format!("#{name}"), Style::default().fg(theme::purple())),
+                Span::styled(
+                    format!("  {open}/{total}"),
+                    Style::default().fg(theme::muted()),
+                ),
+            ]))
+        })
+        .collect();
+    let mut tags_state =
+        ListState::default().with_selected(selected.and_then(|i| i.checked_sub(n_lists)));
+    *tags_state.offset_mut() = prev_offset(app.clickables.tags_inner);
+    let (tags_inner, tags_off) = render_sidebar_pane(
+        f,
+        tags_area,
+        "Tags",
+        tag_items,
+        sidebar_focused && !sel_in_lists,
+        &mut tags_state,
+    );
+
+    app.clickables.lists_inner = Some((lists_inner, lists_off));
+    app.clickables.tags_inner = Some((tags_inner, tags_off));
+}
+
+/// The scroll offset a pane was last drawn with, so it holds its place between
+/// frames (ratatui still nudges it to keep the selection visible).
+fn prev_offset(slot: Option<(Rect, usize)>) -> usize {
+    slot.map(|(_, off)| off).unwrap_or(0)
+}
+
+/// Render one titled sidebar pane (a scrollable list) into `area`, returning its
+/// inner rect and final scroll offset for mouse hit-testing. Draws a scrollbar
+/// when the content overflows.
+fn render_sidebar_pane(
+    f: &mut Frame,
+    area: Rect,
+    title: &str,
+    items: Vec<ListItem<'static>>,
+    focused: bool,
+    state: &mut ListState,
+) -> (Rect, usize) {
+    let block = pane_block(title, focused);
+    let inner = block.inner(area);
+    let total = items.len();
     let list = List::new(items)
         .block(block)
         .highlight_style(theme::selection(focused))
         .highlight_symbol("\u{258e} ");
-    f.render_stateful_widget(list, area, &mut app.list_state);
-    app.clickables.lists_inner = Some((inner, app.list_state.offset()));
-
-    let total = app.lists.len();
+    f.render_stateful_widget(list, area, state);
     if total > inner.height as usize {
-        render_scrollbar(f, area, total, app.list_state.selected().unwrap_or(0));
+        let pos = state.selected().unwrap_or_else(|| state.offset());
+        render_scrollbar(f, area, total, pos);
     }
+    (inner, state.offset())
 }
 
 fn render_tasks(f: &mut Frame, area: Rect, app: &mut App) {
     let focused = matches!(app.mode, Mode::Normal) && app.focus == Focus::Tasks;
-    let title = match app.current_list() {
-        Some(l) => format!("Tasks · {}", l.name),
-        None => "Tasks".to_string(),
+    // The tag view spans lists, so its title says so and each row is tagged with
+    // its home list.
+    let (title, tag_view) = match app.current_view() {
+        Some(View::List(li)) => (
+            format!(
+                "Tasks · {}",
+                app.lists.get(li).map(|l| l.name.as_str()).unwrap_or("")
+            ),
+            false,
+        ),
+        Some(View::Tag(tag)) => (format!("Tag · #{tag} (all lists)"), true),
+        None => ("Tasks".to_string(), false),
     };
     let block = pane_block(&title, focused);
     let inner = block.inner(area);
 
     let today = App::today();
-    let visible = app.visible_task_indices();
-    let items: Vec<ListItem> = visible
+    let refs = app.visible_task_refs();
+    let items: Vec<ListItem> = refs
         .iter()
-        .filter_map(|&i| app.current_list().and_then(|l| l.tasks.get(i)))
-        .map(|t| ListItem::new(task_line(t, today)))
+        .filter_map(|r| {
+            let list = app.lists.get(r.list)?;
+            let t = list.tasks.get(r.task)?;
+            let mut line = task_line(t, today);
+            if tag_view {
+                line.spans.push(Span::styled(
+                    format!("  · {}", list.name),
+                    Style::default().fg(theme::muted()),
+                ));
+            }
+            Some(ListItem::new(line))
+        })
         .collect();
 
     if items.is_empty() {
         f.render_widget(block, area);
         let msg = if app.lists.is_empty() {
             "Press A to create your first list."
+        } else if tag_view {
+            "No tasks with this tag match the filter."
         } else if app.filter.is_active() {
             "No tasks match the filter (Esc to clear)."
         } else {
@@ -631,12 +734,16 @@ fn render_confirm(f: &mut Frame, app: &App) {
 
 /// Space-joined labels for every chord bound to the given actions, e.g.
 /// `[MoveDown, MoveUp]` -> "j ↓ k ↑". Reads the live keymap so the help stays
-/// truthful after the user customizes their bindings.
+/// truthful after the user customizes their bindings. Duplicate labels are
+/// dropped (e.g. BackTab and Shift+Tab both render as "⇧Tab").
 fn keys_for(app: &App, actions: &[Action]) -> String {
-    let mut parts = Vec::new();
+    let mut parts: Vec<String> = Vec::new();
     for &action in actions {
         for chord in app.keymap.chords_for(action) {
-            parts.push(chord.display());
+            let label = chord.display();
+            if !parts.contains(&label) {
+                parts.push(label);
+            }
         }
     }
     parts.join(" ")
@@ -688,11 +795,13 @@ fn render_help(f: &mut Frame, app: &App) {
     let left_lines = vec![
         header("Navigate"),
         row(
-            &keys_for(
-                app,
-                &[Action::ToggleFocus, Action::FocusLists, Action::FocusTasks],
-            ),
-            "switch pane",
+            &keys_for(app, &[Action::ToggleFocus, Action::FocusPrev]),
+            "cycle panes",
+            LW,
+        ),
+        row(
+            &keys_for(app, &[Action::FocusLists, Action::FocusTasks]),
+            "sidebar / tasks",
             LW,
         ),
         row(
