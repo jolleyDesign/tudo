@@ -92,6 +92,7 @@ fn main() {
     {
         let tasks = &mut app.lists[work].tasks;
         tasks[0].priority = Some(Priority::High);
+        tasks[0].points = Some(8);
         tasks[0].due = Some(today + Days::new(3));
         tasks[0].tags = vec!["rust".into()];
         tasks[0].notes = "the big one — ship it this week".into();

@@ -7,13 +7,14 @@ A fast, local-first todo list for your terminal. Fully keyboard-driven (with mou
 ## Features
 
 - **Multiple lists / projects**: switch between named lists in the sidebar.
-- **Rich tasks**: priority, due date, tags, free-text notes, and one level of
-  checkable subtasks.
+- **Rich tasks**: priority, story points, due date, tags, free-text notes, and
+  one level of checkable subtasks.
 - **Reorder freely**: nudge a task up/down or send it straight to the top or
   bottom of its list — and reorder your lists in the sidebar the same way.
-- **Sort on demand**: press `o` to order a list by priority, due date, creation
-  date, or title — or stay on manual order, where your own arrangement (and the
-  reorder keys) rules.
+- **Sort on demand**: press `o` to order a list by priority, story points, due
+  date, creation date, or title, in either direction (press `r` in the picker to
+  flip) — or stay on manual order, where your own arrangement (and the reorder
+  keys) rules.
 - **Archive, don't delete**: press `d` to tuck a task into the dimmed
   **Archived** list (pinned at the bottom of the sidebar) instead of losing it;
   `X` deletes for good, and `m` moves a task back out to unarchive it.
@@ -116,6 +117,7 @@ Press `?` in the app for the same list grouped into an overlay. All of these key
 | `e` | edit the selected task's title, or rename the list when the Lists pane is focused |
 | `s` | add a subtask |
 | `p` | cycle priority (none → low → med → high) |
+| `P` | set or clear story points (a whole number) |
 | `D` | set or clear the due date |
 | `t` | edit tags |
 | `n` | edit notes (multi-line: `Enter` for a newline, `Ctrl+S` to save) |
@@ -133,7 +135,7 @@ Press `?` in the app for the same list grouped into an overlay. All of these key
 |-----|--------|
 | `/` | search (titles, tags, notes) |
 | `f` | cycle the status filter (all / active / done) |
-| `o` | sort tasks (menu: manual / priority / due date / created / A–Z) |
+| `o` | sort tasks (menu: manual / priority / points / due date / created / A–Z; `r` flips direction) |
 | `c` | copy the selected task (menu: full JSON / title / description) |
 | `T` | open the theme picker |
 | `S` | open settings (paths, data location) |
@@ -147,22 +149,24 @@ from today). An empty value clears the date.
 instead of editing them one by one afterwards. For example:
 
 ```
-Ship the release !! #work @tomorrow  n:double-check the changelog  s:tag it, publish, announce
+Ship the release !! ~5 #work @tomorrow  n:double-check the changelog  s:tag it, publish, announce
 ```
 
-creates a medium-priority task titled "Ship the release", tagged `work`, due
-tomorrow, with that note and three subtasks. The pieces:
+creates a medium-priority task titled "Ship the release", estimated at 5 story
+points, tagged `work`, due tomorrow, with that note and three subtasks. The
+pieces:
 
 | Marker | Sets | Notes |
 |--------|------|-------|
 | `!` `!!` `!!!` | priority low / medium / high | a standalone token (4+ marks = high) |
+| `~N` | story points | `~` + a whole number (last one wins) |
 | `#tag` | a tag | repeatable |
 | `@date` | due date | `@` + anything the due-date input accepts (`@today`, `@+3`, `@2026-07-10`) |
 | `n:…` | notes | runs to the next `n:`/`s:`; repeats join with newlines |
 | `s:a, b, c` | subtasks | comma-separated; repeats accumulate |
 
-Priority, tags, and the date can appear in any order and anywhere before the
-first `n:`/`s:`; everything after that is note/subtask text. Markers are only
+Priority, points, tags, and the date can appear in any order and anywhere before
+the first `n:`/`s:`; everything after that is note/subtask text. Markers are only
 recognised at a word boundary, so a plain "We won!" or "C# rewrite" keeps its
 punctuation, and anything unrecognised just stays in the title.
 
@@ -219,6 +223,7 @@ tudo writes a full `keybindings` block into your `config.json` (on first run, an
 | `edit` | `e` | edit the task title, or rename the list |
 | `add-subtask` | `s` | add a subtask |
 | `cycle-priority` | `p` | cycle priority (none → low → med → high) |
+| `set-points` | `P` | set or clear story points (a whole number) |
 | `set-due` | `D` | set or clear the due date |
 | `set-tags` | `t` | edit tags |
 | `set-notes` | `n` | edit notes |
@@ -226,7 +231,7 @@ tudo writes a full `keybindings` block into your `config.json` (on first run, an
 | `delete` | `X` | permanently delete (asks to confirm) |
 | `search` | `/` | search titles, tags, and notes |
 | `cycle-filter` | `f` | cycle the status filter (all / active / done) |
-| `sort` | `o` | open the sort picker (manual / priority / due date / created / A–Z) |
+| `sort` | `o` | open the sort picker (manual / priority / points / due date / created / A–Z; `r` flips direction) |
 | `copy` | `c` | copy the selected task |
 | `theme-picker` | `T` | open the theme picker |
 | `settings` | `S` | open settings |
@@ -248,6 +253,7 @@ Each list is a single JSON file (`<slug>.json`) in your data directory:
       "title": "Ship the TUI",
       "done": false,
       "priority": "high",
+      "points": 8,
       "due": "2026-07-01",
       "tags": ["rust", "urgent"],
       "notes": "the big one",

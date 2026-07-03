@@ -51,6 +51,7 @@ pub enum Action {
     Edit,
     AddSubtask,
     CyclePriority,
+    SetPoints,
     SetDue,
     SetTags,
     SetNotes,
@@ -70,7 +71,7 @@ pub enum Action {
 
 impl Action {
     /// All actions, in canonical order.
-    pub const ALL: [Action; 31] = [
+    pub const ALL: [Action; 32] = [
         Action::ToggleFocus,
         Action::FocusLists,
         Action::FocusTasks,
@@ -89,6 +90,7 @@ impl Action {
         Action::Edit,
         Action::AddSubtask,
         Action::CyclePriority,
+        Action::SetPoints,
         Action::SetDue,
         Action::SetTags,
         Action::SetNotes,
@@ -125,6 +127,7 @@ impl Action {
             Action::Edit => "edit",
             Action::AddSubtask => "add-subtask",
             Action::CyclePriority => "cycle-priority",
+            Action::SetPoints => "set-points",
             Action::SetDue => "set-due",
             Action::SetTags => "set-tags",
             Action::SetNotes => "set-notes",
@@ -176,6 +179,7 @@ impl Action {
             Action::Edit => vec![c(KeyCode::Char('e'))],
             Action::AddSubtask => vec![c(KeyCode::Char('s'))],
             Action::CyclePriority => vec![c(KeyCode::Char('p'))],
+            Action::SetPoints => vec![c(KeyCode::Char('P'))],
             Action::SetDue => vec![c(KeyCode::Char('D'))],
             Action::SetTags => vec![c(KeyCode::Char('t'))],
             Action::SetNotes => vec![c(KeyCode::Char('n'))],

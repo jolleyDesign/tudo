@@ -166,8 +166,13 @@ fn sort_picker_lists_sort_options() {
     let text = render_to_string(&mut app, 100, 30);
     assert!(text.contains("Sort tasks"), "picker title missing: {text}");
     assert!(text.contains("priority"), "priority option missing");
+    assert!(text.contains("points"), "points option missing");
     assert!(text.contains("due date"), "due date option missing");
     assert!(text.contains("newest first"), "created description missing");
+    // Direction control is surfaced in the picker.
+    assert!(text.contains("direction"), "direction line missing: {text}");
+    assert!(text.contains("ascending"), "direction state missing");
+    assert!(text.contains("flip"), "direction flip hint missing");
     assert!(text.contains("Enter apply"), "picker hint missing");
 }
 
@@ -185,12 +190,46 @@ fn footer_shows_active_sort_only_when_not_manual() {
         "manual sort should be hidden: {text}"
     );
 
-    // Any other sort is surfaced.
+    // Any other sort is surfaced, along with an ascending direction arrow.
     app.set_sort(tudo::model::Sort::Priority);
     let text = render_to_string(&mut app, 100, 30);
     assert!(
         text.contains("sort:priority"),
         "active sort missing: {text}"
+    );
+    assert!(text.contains('\u{2191}'), "ascending arrow missing: {text}");
+
+    // Flipping direction swaps the arrow (no High/Low task here, so the only
+    // arrows in view come from the footer indicator).
+    app.toggle_sort_dir();
+    let text = render_to_string(&mut app, 100, 30);
+    assert!(
+        text.contains("sort:priority"),
+        "active sort missing: {text}"
+    );
+    assert!(
+        text.contains('\u{2193}'),
+        "descending arrow missing: {text}"
+    );
+}
+
+#[test]
+fn task_line_and_detail_show_story_points() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = App::new(Some(dir.path().to_path_buf())).unwrap();
+    app.add_list("Work".to_string());
+    app.add_task("Estimated task ~5".to_string());
+
+    // The list row shows a compact "5pt" chip.
+    let text = render_to_string(&mut app, 100, 30);
+    assert!(text.contains("5pt"), "points chip missing from row: {text}");
+
+    // The detail view spells it out under the meta line.
+    app.open_detail();
+    let text = render_to_string(&mut app, 100, 30);
+    assert!(
+        text.contains("points 5"),
+        "points missing from detail: {text}"
     );
 }
 

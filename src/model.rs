@@ -76,6 +76,9 @@ pub struct Task {
     pub done: bool,
     #[serde(default)]
     pub priority: Option<Priority>,
+    /// Story points: a unitless estimate of size/effort. `None` means unestimated.
+    #[serde(default)]
+    pub points: Option<u16>,
     #[serde(default)]
     pub due: Option<NaiveDate>,
     #[serde(default)]
@@ -96,6 +99,7 @@ impl Task {
             title: title.into(),
             done: false,
             priority: None,
+            points: None,
             due: None,
             tags: Vec::new(),
             notes: String::new(),
@@ -165,6 +169,8 @@ pub enum Sort {
     Manual,
     /// Highest priority first (high → medium → low → none).
     Priority,
+    /// Fewest story points first; tasks with no estimate come last.
+    Points,
     /// Soonest due date first; tasks with no due date come last.
     Due,
     /// Most recently created first.
@@ -175,10 +181,11 @@ pub enum Sort {
 
 impl Sort {
     /// All sorts, in the order they appear in the picker.
-    pub fn all() -> [Sort; 5] {
+    pub fn all() -> [Sort; 6] {
         [
             Sort::Manual,
             Sort::Priority,
+            Sort::Points,
             Sort::Due,
             Sort::Created,
             Sort::Alphabetical,
@@ -190,6 +197,7 @@ impl Sort {
         match self {
             Sort::Manual => "manual",
             Sort::Priority => "priority",
+            Sort::Points => "points",
             Sort::Due => "due date",
             Sort::Created => "created",
             Sort::Alphabetical => "A–Z",
@@ -201,24 +209,66 @@ impl Sort {
         match self {
             Sort::Manual => "your own order · reordering enabled",
             Sort::Priority => "highest priority first",
+            Sort::Points => "fewest story points first",
             Sort::Due => "soonest due date first",
             Sort::Created => "newest first",
             Sort::Alphabetical => "by title, A to Z",
         }
     }
 
-    /// Order two tasks for this sort. `Manual` reports every pair equal, so a
-    /// *stable* sort with it leaves the stored order untouched — and any ties
-    /// under the other sorts fall back to that same stored order.
+    /// Order two tasks for this sort in its *ascending* form (see [`SortDir`]).
+    /// `Manual` reports every pair equal, so a *stable* sort with it leaves the
+    /// stored order untouched — and any ties under the other sorts fall back to
+    /// that same stored order.
     pub fn compare(self, a: &Task, b: &Task) -> Ordering {
         match self {
             Sort::Manual => Ordering::Equal,
             Sort::Priority => a.priority_rank().cmp(&b.priority_rank()),
+            // `(is_none, points)` keys put estimated tasks (false) before
+            // unestimated ones (true), then order two estimates ascending.
+            Sort::Points => (a.points.is_none(), a.points).cmp(&(b.points.is_none(), b.points)),
             // `(is_none, due)` keys put dated tasks (false) before undated ones
             // (true), and order two dated tasks by their date ascending.
             Sort::Due => (a.due.is_none(), a.due).cmp(&(b.due.is_none(), b.due)),
             Sort::Created => b.created.cmp(&a.created),
             Sort::Alphabetical => a.title.to_lowercase().cmp(&b.title.to_lowercase()),
+        }
+    }
+}
+
+/// Direction a [`Sort`] is applied in. `Ascending` is each sort's natural order
+/// as defined by [`Sort::compare`] (highest priority first, soonest due first,
+/// fewest points first, …); `Descending` mirrors it. Like [`Sort`] itself this
+/// is session-only and resets to the default each run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SortDir {
+    #[default]
+    Ascending,
+    Descending,
+}
+
+impl SortDir {
+    /// Flip ascending ↔ descending.
+    pub fn toggle(self) -> SortDir {
+        match self {
+            SortDir::Ascending => SortDir::Descending,
+            SortDir::Descending => SortDir::Ascending,
+        }
+    }
+
+    /// Arrow shown next to the sort in the footer / picker.
+    pub fn arrow(self) -> &'static str {
+        match self {
+            SortDir::Ascending => "\u{2191}",  // ↑
+            SortDir::Descending => "\u{2193}", // ↓
+        }
+    }
+
+    /// Word form for the picker's direction line.
+    pub fn label(self) -> &'static str {
+        match self {
+            SortDir::Ascending => "ascending",
+            SortDir::Descending => "descending",
         }
     }
 }
@@ -306,6 +356,7 @@ pub fn parse_tags(input: &str) -> Vec<String> {
 pub struct ParsedAdd {
     pub title: String,
     pub priority: Option<Priority>,
+    pub points: Option<u16>,
     pub due: Option<NaiveDate>,
     pub tags: Vec<String>,
     pub notes: String,
@@ -317,18 +368,24 @@ pub struct ParsedAdd {
 /// two can never disagree about what a token means.
 enum HeadToken {
     Priority(Priority),
+    Points(u16),
     Tag,
     Due(NaiveDate),
     Plain,
 }
 
-/// Classify one head token. `@` tokens that aren't a valid date fall through to
-/// [`HeadToken::Plain`] (they stay in the title).
+/// Classify one head token. `@` tokens that aren't a valid date, and `~` tokens
+/// that aren't a valid number, fall through to [`HeadToken::Plain`] (they stay
+/// in the title, so `~/paths` and stray `@`s are safe).
 fn classify_head_token(tok: &str, today: NaiveDate) -> HeadToken {
     if !tok.is_empty() && tok.bytes().all(|b| b == b'!') {
         HeadToken::Priority(Priority::from_bang_count(tok.len()))
     } else if tok.starts_with('#') {
         HeadToken::Tag
+    } else if let Some(rest) = tok.strip_prefix('~')
+        && let Ok(points) = rest.parse::<u16>()
+    {
+        HeadToken::Points(points)
     } else if let Some(rest) = tok.strip_prefix('@')
         && !rest.is_empty()
         && let Ok(Some(date)) = parse_due(rest, today)
@@ -348,6 +405,7 @@ fn classify_head_token(tok: &str, today: NaiveDate) -> HeadToken {
 /// Word markers (head, any order):
 /// - `!` / `!!` / `!!!` — priority low / medium / high (last one wins; 4+ marks
 ///   clamp to high)
+/// - `~N` — story points (`~` + a non-negative integer; last one wins)
 /// - `#tag` — a tag, repeatable (parsed by [`parse_tags`])
 /// - `@date` — due date (`@` + anything [`parse_due`] accepts)
 ///
@@ -371,6 +429,7 @@ pub fn parse_quick_add(input: &str, today: NaiveDate) -> ParsedAdd {
     for tok in head.split_whitespace() {
         match classify_head_token(tok, today) {
             HeadToken::Priority(p) => parsed.priority = Some(p),
+            HeadToken::Points(n) => parsed.points = Some(n),
             HeadToken::Tag => tag_tokens.push(tok),
             HeadToken::Due(date) => parsed.due = Some(date),
             HeadToken::Plain => title_words.push(tok),
@@ -432,6 +491,8 @@ pub enum QuickAddSpan {
     Plain,
     /// A `!` / `!!` / `!!!` priority run (carries the level it resolves to).
     Priority(Priority),
+    /// A `~N` story-points token.
+    Points,
     /// A `#tag` token.
     Tag,
     /// A valid `@date` token.
@@ -472,6 +533,7 @@ pub fn quick_add_spans(input: &str, today: NaiveDate) -> Vec<(usize, usize, Quic
         } else {
             match classify_head_token(&head[i..end], today) {
                 HeadToken::Priority(p) => QuickAddSpan::Priority(p),
+                HeadToken::Points(_) => QuickAddSpan::Points,
                 HeadToken::Tag => QuickAddSpan::Tag,
                 HeadToken::Due(_) => QuickAddSpan::Due,
                 HeadToken::Plain => QuickAddSpan::Plain,

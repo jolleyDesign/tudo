@@ -275,6 +275,14 @@ fn task_line(t: &Task, today: NaiveDate) -> Line<'static> {
         spans.extend(progress_spans(done, total, 4));
     }
 
+    // story points
+    if let Some(points) = t.points {
+        spans.push(Span::styled(
+            format!("  {points}pt"),
+            Style::default().fg(theme::accent()),
+        ));
+    }
+
     // tags
     for tag in &t.tags {
         spans.push(Span::styled(
@@ -354,6 +362,16 @@ fn render_detail(f: &mut Frame, area: Rect, app: &App) {
         meta.push(Span::styled(
             format!("{} {}", theme::DOT, p.label()),
             Style::default().fg(theme::priority_color(p)),
+        ));
+    }
+    if let Some(points) = task.points {
+        meta.push(Span::styled(
+            "   points ",
+            Style::default().fg(theme::muted()),
+        ));
+        meta.push(Span::styled(
+            points.to_string(),
+            Style::default().fg(theme::accent()),
         ));
     }
     if let Some(due) = task.due {
@@ -467,9 +485,14 @@ fn render_footer(f: &mut Frame, area: Rect, app: &App) {
         right.push(' ');
     }
     // Only surface the sort when it isn't the default manual order, to keep the
-    // footer quiet in the common case.
+    // footer quiet in the common case. Manual has no meaningful direction, so the
+    // arrow is only shown for the field sorts.
     if app.sort != Sort::Manual {
-        right.push_str(&format!("sort:{} ", app.sort.label()));
+        right.push_str(&format!(
+            "sort:{} {} ",
+            app.sort.label(),
+            app.sort_dir.arrow()
+        ));
     }
     if !app.status.is_empty() {
         right.push_str(&app.status);
@@ -557,6 +580,9 @@ fn highlight_quick_add(buffer: &str) -> Line<'static> {
                 QuickAddSpan::Priority(p) => Style::default()
                     .fg(theme::priority_color(p))
                     .add_modifier(Modifier::BOLD),
+                QuickAddSpan::Points => Style::default()
+                    .fg(theme::accent())
+                    .add_modifier(Modifier::BOLD),
                 QuickAddSpan::Tag => Style::default().fg(theme::purple()),
                 QuickAddSpan::Due => Style::default().fg(theme::teal()),
                 QuickAddSpan::NoteMarker => Style::default()
@@ -625,7 +651,7 @@ fn primary_key(app: &App, action: Action) -> String {
 }
 
 fn render_help(f: &mut Frame, app: &App) {
-    let area = centered_rect_cols(f.area(), 68, 23);
+    let area = centered_rect_cols(f.area(), 68, 24);
     overlay_clear(f, area);
     let block = overlay_block("Keybindings", theme::accent());
     let inner = block.inner(area);
@@ -711,6 +737,7 @@ fn render_help(f: &mut Frame, app: &App) {
         Line::raw(""),
         header("Details"),
         row(&keys_for(app, &[Action::CyclePriority]), "priority", RW),
+        row(&keys_for(app, &[Action::SetPoints]), "story points", RW),
         row(&keys_for(app, &[Action::SetDue]), "due date", RW),
         row(&keys_for(app, &[Action::SetTags]), "tags", RW),
         row(&keys_for(app, &[Action::SetNotes]), "notes", RW),
@@ -886,7 +913,7 @@ fn render_sort_picker(f: &mut Frame, app: &App) {
         return;
     };
     let options = crate::model::Sort::all();
-    let area = centered_rect(f.area(), 60, options.len() as u16 + 6);
+    let area = centered_rect(f.area(), 60, options.len() as u16 + 7);
     overlay_clear(f, area);
     let block = overlay_block("Sort tasks", theme::accent());
     let inner = block.inner(area);
@@ -920,8 +947,15 @@ fn render_sort_picker(f: &mut Frame, app: &App) {
         ]));
     }
     lines.push(Line::raw(""));
+    lines.push(Line::from(vec![
+        Span::styled("direction  ", Style::default().fg(theme::muted())),
+        Span::styled(
+            format!("{} {}", app.sort_dir.label(), app.sort_dir.arrow()),
+            Style::default().fg(theme::accent()),
+        ),
+    ]));
     lines.push(Line::from(Span::styled(
-        "\u{2191}/\u{2193} choose \u{00b7} 1-5 quick \u{00b7} Enter apply \u{00b7} Esc cancel",
+        "\u{2191}/\u{2193} choose \u{00b7} 1-6 quick \u{00b7} r flip \u{00b7} Enter apply \u{00b7} Esc cancel",
         Style::default().fg(theme::muted()),
     )));
 

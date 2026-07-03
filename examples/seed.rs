@@ -52,6 +52,7 @@ fn build_lists(today: NaiveDate) -> Vec<List> {
                     d(2),
                     &["release", "rust"],
                 )
+                .points(8)
                 .note("Cut the 1.0 tag once CI is green and the changelog is final.")
                 .subs(&[
                     ("Finalise the changelog", true),
@@ -64,6 +65,7 @@ fn build_lists(today: NaiveDate) -> Vec<List> {
                     ago(1),
                     &["bug"],
                 )
+                .points(3)
                 .note("Repro: resize the window while scrolled to the bottom of a long list."),
                 task(
                     "Write integration tests for storage",
@@ -71,6 +73,7 @@ fn build_lists(today: NaiveDate) -> Vec<List> {
                     None,
                     &["tests"],
                 )
+                .points(5)
                 .subs(&[
                     ("JSON round-trip", true),
                     ("Atomic save", true),
@@ -81,13 +84,15 @@ fn build_lists(today: NaiveDate) -> Vec<List> {
                     Some(Priority::Medium),
                     d(0),
                     &["review"],
-                ),
+                )
+                .points(2),
                 task(
                     "Refactor event handling",
                     Some(Priority::Low),
                     None,
                     &["tech-debt"],
                 )
+                .points(13)
                 .note("Split nav_key into per-mode handlers; it's getting long."),
                 done(task("Update the README screenshots", None, None, &["docs"])),
                 done(task(
@@ -235,12 +240,17 @@ fn done(mut t: Task) -> Task {
 
 trait TaskExt {
     fn note(self, notes: &str) -> Self;
+    fn points(self, points: u16) -> Self;
     fn subs(self, subs: &[(&str, bool)]) -> Self;
 }
 
 impl TaskExt for Task {
     fn note(mut self, notes: &str) -> Self {
         self.notes = notes.to_string();
+        self
+    }
+    fn points(mut self, points: u16) -> Self {
+        self.points = Some(points);
         self
     }
     fn subs(mut self, subs: &[(&str, bool)]) -> Self {

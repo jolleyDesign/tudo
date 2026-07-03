@@ -81,7 +81,8 @@ fn sort_picker_key(app: &mut App, key: KeyEvent) {
     match key.code {
         KeyCode::Char('j') | KeyCode::Down => app.sort_picker_move(1),
         KeyCode::Char('k') | KeyCode::Up => app.sort_picker_move(-1),
-        KeyCode::Char(c @ '1'..='5') => app.sort_picker_select(c as usize - '1' as usize),
+        KeyCode::Char(c @ '1'..='6') => app.sort_picker_select(c as usize - '1' as usize),
+        KeyCode::Char('r') | KeyCode::Left | KeyCode::Right => app.toggle_sort_dir(),
         KeyCode::Enter => app.sort_picker_confirm(),
         KeyCode::Esc | KeyCode::Char('q') => app.sort_picker_cancel(),
         _ => {}
@@ -132,6 +133,7 @@ fn dispatch(app: &mut App, action: Action) {
         Action::Archive => app.archive_selection(),
         Action::Delete => app.start_delete(),
         Action::CyclePriority => app.cycle_current_priority(),
+        Action::SetPoints => app.start_set_points(),
         Action::SetDue => app.start_set_due(),
         Action::SetTags => app.start_set_tags(),
         Action::SetNotes => app.start_set_notes(),
@@ -155,6 +157,7 @@ fn is_task_action(action: Action) -> bool {
         action,
         Action::ToggleDone
             | Action::CyclePriority
+            | Action::SetPoints
             | Action::SetDue
             | Action::SetTags
             | Action::SetNotes
@@ -229,6 +232,7 @@ fn apply_input(app: &mut App, field: InputField, buffer: String) {
         InputField::NewTask => app.add_task(buffer),
         InputField::EditTask => app.edit_current_task_title(buffer),
         InputField::Tags => app.set_current_tags(&buffer),
+        InputField::Points => app.set_current_points(&buffer),
         InputField::Due => app.set_current_due(&buffer),
         InputField::Notes => app.set_current_notes(buffer),
         InputField::NewSubtask => app.add_subtask(buffer),

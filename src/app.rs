@@ -16,7 +16,7 @@ pub const STATUS_TTL: Duration = Duration::from_secs(4);
 
 use crate::config::{self, Config};
 use crate::keybind::Keymap;
-use crate::model::{self, List, Sort, Subtask, Task};
+use crate::model::{self, List, Sort, SortDir, Subtask, Task};
 use crate::storage;
 use crate::theme::{self, ThemeKind};
 
@@ -35,6 +35,7 @@ pub enum InputField {
     NewTask,
     EditTask,
     Tags,
+    Points,
     Due,
     Notes,
     NewSubtask,
@@ -337,6 +338,8 @@ pub struct App {
     pub filter: Filter,
     /// How the visible task list is ordered (session-only; see [`Sort`]).
     pub sort: Sort,
+    /// Direction the active `sort` is applied in (session-only; see [`SortDir`]).
+    pub sort_dir: SortDir,
     /// When set, completed tasks are shown at the bottom of the list regardless
     /// of the active [`Sort`]. Display-only (the stored order is untouched) and
     /// persisted in the config, unlike the session-only `sort`.
@@ -380,6 +383,7 @@ impl App {
             subtask_state: ListState::default(),
             filter: Filter::default(),
             sort: Sort::default(),
+            sort_dir: SortDir::default(),
             completed_to_bottom: false,
             theme,
             keymap: Keymap::default(),
@@ -639,7 +643,13 @@ impl App {
             .map(|(i, _)| i)
             .collect();
         if self.sort != Sort::Manual {
-            indices.sort_by(|&a, &b| self.sort.compare(&list.tasks[a], &list.tasks[b]));
+            indices.sort_by(|&a, &b| {
+                let ord = self.sort.compare(&list.tasks[a], &list.tasks[b]);
+                match self.sort_dir {
+                    SortDir::Ascending => ord,
+                    SortDir::Descending => ord.reverse(),
+                }
+            });
         }
         // Optionally float completed tasks to the bottom. `sort_by_key` is
         // stable and `false < true`, so not-done tasks keep their (sorted)
@@ -867,6 +877,7 @@ impl App {
         if let Some(list) = self.lists.get_mut(li) {
             let mut task = Task::new(parsed.title);
             task.priority = parsed.priority;
+            task.points = parsed.points;
             task.due = parsed.due;
             task.tags = parsed.tags;
             task.notes = parsed.notes;
@@ -917,6 +928,24 @@ impl App {
     pub fn set_current_tags(&mut self, input: &str) {
         let tags = model::parse_tags(input);
         self.with_current_task(|t| t.tags = tags);
+    }
+
+    /// Set (or, on empty input, clear) the selected task's story points. A
+    /// non-numeric entry is rejected with a status hint and leaves it unchanged.
+    pub fn set_current_points(&mut self, input: &str) {
+        let trimmed = input.trim();
+        if trimmed.is_empty() {
+            self.with_current_task(|t| t.points = None);
+            return;
+        }
+        match trimmed.parse::<u16>() {
+            Ok(points) => {
+                self.with_current_task(|t| t.points = Some(points));
+            }
+            Err(_) => {
+                self.set_status("points must be a whole number (empty clears)".to_string());
+            }
+        }
     }
 
     pub fn set_current_notes(&mut self, notes: String) {
@@ -1374,12 +1403,28 @@ impl App {
         }
     }
 
-    /// Apply the sort at `idx` (the 1-5 quick keys) and close the picker.
+    /// Apply the sort at `idx` (the 1-6 quick keys) and close the picker.
     pub fn sort_picker_select(&mut self, idx: usize) {
         let all = Sort::all();
         if idx < all.len() && matches!(self.mode, Mode::SortPicker(_)) {
             self.finish_sort_picker();
             self.set_sort(all[idx]);
+        }
+    }
+
+    /// Flip the sort direction. Works from inside the picker (live preview
+    /// behind the overlay) or standalone; the selected task stays put.
+    pub fn toggle_sort_dir(&mut self) {
+        let current_raw = self.current_task_index();
+        self.sort_dir = self.sort_dir.toggle();
+        self.keep_task_selected(current_raw);
+        if self.sort == Sort::Manual {
+            self.set_status(format!(
+                "sort direction: {} (pick a sort to apply)",
+                self.sort_dir.label()
+            ));
+        } else {
+            self.announce_sort();
         }
     }
 
@@ -1406,6 +1451,13 @@ impl App {
     pub fn set_sort(&mut self, sort: Sort) {
         let current_raw = self.current_task_index();
         self.sort = sort;
+        self.keep_task_selected(current_raw);
+        self.announce_sort();
+    }
+
+    /// Re-select the task at raw index `current_raw` after a re-order, falling
+    /// back to a clamped selection if it is no longer visible.
+    fn keep_task_selected(&mut self, current_raw: Option<usize>) {
         if let Some(raw) = current_raw
             && let Some(pos) = self.visible_task_indices().iter().position(|&i| i == raw)
         {
@@ -1413,7 +1465,20 @@ impl App {
         } else {
             self.clamp_task_selection();
         }
-        self.set_status(format!("sorted by {}", sort.label()));
+    }
+
+    /// Status line for the active sort. `Manual` ignores direction (every pair
+    /// ties, so the arrow would be meaningless), so it reports just the order.
+    fn announce_sort(&mut self) {
+        if self.sort == Sort::Manual {
+            self.set_status(format!("sorted by {}", self.sort.label()));
+        } else {
+            self.set_status(format!(
+                "sorted by {} {}",
+                self.sort.label(),
+                self.sort_dir.arrow()
+            ));
+        }
     }
 
     // --- subtask actions -----------------------------------------------------
@@ -1598,6 +1663,20 @@ impl App {
         self.mode = Mode::Input(InputState::new(
             InputField::Due,
             "Due (YYYY-MM-DD, today, tomorrow, +N; empty clears)",
+            buffer,
+            false,
+            self.in_detail(),
+        ));
+    }
+
+    pub fn start_set_points(&mut self) {
+        let Some(task) = self.current_task() else {
+            return;
+        };
+        let buffer = task.points.map(|p| p.to_string()).unwrap_or_default();
+        self.mode = Mode::Input(InputState::new(
+            InputField::Points,
+            "Story points (whole number; empty clears)",
             buffer,
             false,
             self.in_detail(),

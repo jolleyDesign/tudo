@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use tudo::app::{App, CopyWhat, InputField, Mode, StatusFilter};
 use tudo::keybind::{Keymap, Overrides};
-use tudo::model::{Priority, Sort};
+use tudo::model::{Priority, Sort, SortDir};
 use tudo::theme::ThemeKind;
 use tudo::{config, event, storage};
 
@@ -230,6 +230,25 @@ fn set_tags_parses_input() {
         app.current_task().unwrap().tags,
         vec!["a".to_string(), "b".to_string()]
     );
+}
+
+#[test]
+fn set_points_valid_invalid_and_clear() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app_in(dir.path());
+    app.add_list("L".to_string());
+    app.add_task("t".to_string());
+
+    app.set_current_points("5");
+    assert_eq!(app.current_task().unwrap().points, Some(5));
+
+    // A non-numeric entry is rejected and leaves the value untouched.
+    app.set_current_points("lots");
+    assert_eq!(app.current_task().unwrap().points, Some(5));
+    assert!(!app.status.is_empty());
+
+    app.set_current_points(""); // clears
+    assert_eq!(app.current_task().unwrap().points, None);
 }
 
 #[test]
@@ -1133,4 +1152,105 @@ fn sort_picker_opens_and_quick_key_applies() {
     event::handle_key(&mut app, KeyEvent::from(KeyCode::Esc));
     assert!(matches!(app.mode, Mode::Normal));
     assert_eq!(app.sort, Sort::Priority);
+}
+
+#[test]
+fn quick_add_reads_story_points_and_persists() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app_in(dir.path());
+    app.add_list("L".to_string());
+
+    app.add_task("Estimate this ~8".to_string());
+    let task = app.current_task().unwrap();
+    assert_eq!(task.title, "Estimate this");
+    assert_eq!(task.points, Some(8));
+
+    // Survives a round-trip through disk.
+    let reloaded = app_in(dir.path());
+    assert_eq!(reloaded.lists[0].tasks[0].points, Some(8));
+}
+
+#[test]
+fn sort_by_points_orders_fewest_first_with_unestimated_last() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app_in(dir.path());
+    app.add_list("L".to_string());
+    app.add_task("none".to_string()); // raw 0, unestimated
+    app.add_task("three".to_string()); // raw 1
+    app.add_task("one".to_string()); // raw 2
+    app.add_task("two".to_string()); // raw 3
+
+    app.select_task_visible(1);
+    app.set_current_points("3");
+    app.select_task_visible(2);
+    app.set_current_points("1");
+    app.select_task_visible(3);
+    app.set_current_points("2");
+
+    app.set_sort(Sort::Points);
+    assert_eq!(visible_titles(&app), ["one", "two", "three", "none"]);
+}
+
+#[test]
+fn toggling_direction_reverses_the_active_sort() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app_in(dir.path());
+    app.add_list("L".to_string());
+    app.add_task("none".to_string());
+    app.add_task("three".to_string());
+    app.add_task("one".to_string());
+    app.add_task("two".to_string());
+    app.select_task_visible(1);
+    app.set_current_points("3");
+    app.select_task_visible(2);
+    app.set_current_points("1");
+    app.select_task_visible(3);
+    app.set_current_points("2");
+
+    app.set_sort(Sort::Points);
+    assert_eq!(app.sort_dir, SortDir::Ascending);
+    assert_eq!(visible_titles(&app), ["one", "two", "three", "none"]);
+
+    // Descending mirrors the whole order (unestimated floats to the front).
+    app.toggle_sort_dir();
+    assert_eq!(app.sort_dir, SortDir::Descending);
+    assert_eq!(visible_titles(&app), ["none", "three", "two", "one"]);
+
+    // And back again.
+    app.toggle_sort_dir();
+    assert_eq!(app.sort_dir, SortDir::Ascending);
+    assert_eq!(visible_titles(&app), ["one", "two", "three", "none"]);
+}
+
+#[test]
+fn direction_does_not_disturb_manual_order() {
+    // Manual reports every pair equal, so flipping direction is a stable no-op.
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app_in(dir.path());
+    app.add_list("L".to_string());
+    app.add_task("a".to_string());
+    app.add_task("b".to_string());
+    app.add_task("c".to_string());
+
+    assert_eq!(app.sort, Sort::Manual);
+    app.toggle_sort_dir();
+    assert_eq!(visible_titles(&app), ["a", "b", "c"]);
+}
+
+#[test]
+fn sort_picker_flip_key_and_points_quick_key() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app_in(dir.path());
+    app.add_list("L".to_string());
+    app.add_task("x".to_string());
+
+    // `o` opens the picker; `r` flips the direction; `3` picks Points (3rd option).
+    event::handle_key(&mut app, KeyEvent::from(KeyCode::Char('o')));
+    assert!(matches!(app.mode, Mode::SortPicker(_)));
+    event::handle_key(&mut app, KeyEvent::from(KeyCode::Char('r')));
+    assert_eq!(app.sort_dir, SortDir::Descending);
+    event::handle_key(&mut app, KeyEvent::from(KeyCode::Char('3')));
+    assert!(matches!(app.mode, Mode::Normal));
+    assert_eq!(app.sort, Sort::Points);
+    assert_eq!(app.sort_dir, SortDir::Descending);
 }

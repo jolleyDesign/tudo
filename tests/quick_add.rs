@@ -27,10 +27,11 @@ fn plain_title_is_untouched() {
 #[test]
 fn full_example_with_all_markers() {
     let p = parse(
-        "Ship the release !! #work @tomorrow  n:check the changelog  s:tag it, publish, announce",
+        "Ship the release !! ~5 #work @tomorrow  n:check the changelog  s:tag it, publish, announce",
     );
     assert_eq!(p.title, "Ship the release");
     assert_eq!(p.priority, Some(Priority::Medium));
+    assert_eq!(p.points, Some(5));
     assert_eq!(p.tags, vec!["work"]);
     assert_eq!(p.due, Some(today() + Days::new(1)));
     assert_eq!(p.notes, "check the changelog");
@@ -64,6 +65,19 @@ fn priority_levels_and_clamp() {
     assert_eq!(parse("x !!!!!").priority, Some(Priority::High));
     // Last standalone bang token wins.
     assert_eq!(parse("x ! !!!").priority, Some(Priority::High));
+}
+
+#[test]
+fn story_points_marker() {
+    assert_eq!(parse("x ~5").points, Some(5));
+    assert_eq!(parse("x ~0").points, Some(0));
+    assert_eq!(parse("x ~13").points, Some(13));
+    // Last points token wins, matching the priority rule.
+    assert_eq!(parse("x ~3 ~8").points, Some(8));
+    // A `~` that isn't a whole number stays in the title.
+    let p = parse("resize ~/photos ~big");
+    assert_eq!(p.title, "resize ~/photos ~big");
+    assert_eq!(p.points, None);
 }
 
 #[test]
@@ -181,7 +195,8 @@ fn spans_are_contiguous_and_cover_the_whole_input() {
     for input in [
         "",
         "Buy milk",
-        "Ship it !! #work @today n:note here s:a, b",
+        "Ship it !! ~5 #work @today n:note here s:a, b",
+        "resize ~/photos ~big",
         "café ! #naïve @+2 n:später",
         "!! #tag @today",
         "x n:",
@@ -202,13 +217,14 @@ fn spans_are_contiguous_and_cover_the_whole_input() {
 
 #[test]
 fn spans_classify_each_marker_kind() {
-    let input = "Ship it !! #work @today n:note s:a, b";
+    let input = "Ship it !! ~5 #work @today n:note s:a, b";
     let kinds: Vec<(&str, QuickAddSpan)> = quick_add_spans(input, today())
         .into_iter()
         .map(|(s, e, k)| (&input[s..e], k))
         .collect();
 
     assert!(kinds.contains(&("!!", QuickAddSpan::Priority(Priority::Medium))));
+    assert!(kinds.contains(&("~5", QuickAddSpan::Points)));
     assert!(kinds.contains(&("#work", QuickAddSpan::Tag)));
     assert!(kinds.contains(&("@today", QuickAddSpan::Due)));
     assert!(kinds.contains(&("n:", QuickAddSpan::NoteMarker)));

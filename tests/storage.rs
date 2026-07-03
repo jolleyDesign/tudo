@@ -52,6 +52,7 @@ fn save_and_load_round_trips_all_fields() {
     list.slug = "work".to_string();
     let mut task = Task::new("Ship the TUI");
     task.priority = Some(Priority::High);
+    task.points = Some(8);
     task.due = Some(date(2026, 7, 1));
     task.tags = vec!["rust".to_string(), "urgent".to_string()];
     task.notes = "line one\nline two".to_string();
@@ -69,6 +70,7 @@ fn save_and_load_round_trips_all_fields() {
     let t = &l.tasks[0];
     assert_eq!(t.title, "Ship the TUI");
     assert_eq!(t.priority, Some(Priority::High));
+    assert_eq!(t.points, Some(8));
     assert_eq!(t.due, Some(date(2026, 7, 1)));
     assert_eq!(t.tags, vec!["rust".to_string(), "urgent".to_string()]);
     assert_eq!(t.notes, "line one\nline two");
