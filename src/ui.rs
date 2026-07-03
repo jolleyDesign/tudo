@@ -505,11 +505,9 @@ fn render_input(f: &mut Frame, app: &App) {
     f.render_widget(block, area);
 
     f.render_widget(
-        Paragraph::new(Span::styled(
-            input.buffer.clone(),
-            Style::default().fg(theme::fg()),
-        ))
-        .wrap(Wrap { trim: false }),
+        Paragraph::new(input.buffer.as_str())
+            .style(Style::default().fg(theme::fg()))
+            .wrap(Wrap { trim: false }),
         inner,
     );
 
@@ -517,7 +515,7 @@ fn render_input(f: &mut Frame, app: &App) {
     if input.multiline {
         let mut x = inner.x;
         let mut y = inner.y;
-        for ch in input.buffer.chars() {
+        for ch in input.buffer.chars().take(input.cursor) {
             if ch == '\n' {
                 y += 1;
                 x = inner.x;
