@@ -795,13 +795,13 @@ fn render_help(f: &mut Frame, app: &App) {
     let left_lines = vec![
         header("Navigate"),
         row(
-            &keys_for(app, &[Action::ToggleFocus, Action::FocusPrev]),
-            "cycle panes",
+            &keys_for(app, &[Action::ToggleFocus]),
+            "toggle panes",
             LW,
         ),
         row(
-            &keys_for(app, &[Action::FocusLists, Action::FocusTasks]),
-            "sidebar / tasks",
+            &keys_for(app, &[Action::FocusLists, Action::FocusTasks, Action::FocusTags]),
+            "lists / tasks / tags",
             LW,
         ),
         row(

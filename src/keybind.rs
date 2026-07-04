@@ -32,9 +32,9 @@ pub type Overrides = BTreeMap<String, Vec<String>>;
 pub enum Action {
     // Navigate
     ToggleFocus,
-    FocusPrev,
     FocusLists,
     FocusTasks,
+    FocusTags,
     MoveDown,
     MoveUp,
     Activate,
@@ -74,9 +74,9 @@ impl Action {
     /// All actions, in canonical order.
     pub const ALL: [Action; 33] = [
         Action::ToggleFocus,
-        Action::FocusPrev,
         Action::FocusLists,
         Action::FocusTasks,
+        Action::FocusTags,
         Action::MoveDown,
         Action::MoveUp,
         Action::Activate,
@@ -112,9 +112,9 @@ impl Action {
     pub fn config_name(self) -> &'static str {
         match self {
             Action::ToggleFocus => "toggle-focus",
-            Action::FocusPrev => "focus-prev",
             Action::FocusLists => "focus-lists",
             Action::FocusTasks => "focus-tasks",
+            Action::FocusTags => "focus-tags",
             Action::MoveDown => "move-down",
             Action::MoveUp => "move-up",
             Action::Activate => "activate",
@@ -158,15 +158,17 @@ impl Action {
         // Helper to build a plain (unmodified) chord.
         let c = KeyChord::plain;
         match self {
-            Action::ToggleFocus => vec![c(KeyCode::Tab)],
+            // Only two panes now, so Tab and Shift+Tab both toggle between them.
             // Shift+Tab reaches us as BackTab on most terminals, but some send
             // Tab with the Shift modifier — accept both.
-            Action::FocusPrev => vec![
+            Action::ToggleFocus => vec![
+                c(KeyCode::Tab),
                 c(KeyCode::BackTab),
                 KeyChord::new(KeyCode::Tab, KeyModifiers::SHIFT),
             ],
             Action::FocusLists => vec![c(KeyCode::Char('h')), c(KeyCode::Left)],
             Action::FocusTasks => vec![c(KeyCode::Char('l')), c(KeyCode::Right)],
+            Action::FocusTags => vec![c(KeyCode::Char('#'))],
             Action::MoveDown => vec![c(KeyCode::Char('j')), c(KeyCode::Down)],
             Action::MoveUp => vec![c(KeyCode::Char('k')), c(KeyCode::Up)],
             Action::Activate => vec![c(KeyCode::Enter)],

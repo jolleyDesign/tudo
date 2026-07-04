@@ -21,20 +21,11 @@ use crate::storage;
 use crate::theme::{self, ThemeKind};
 
 /// Which pane currently has keyboard focus. The sidebar (lists *and* tags) is a
-/// single focus; which of its two panes is active is derived from the cursor
-/// (see [`App::current_section`]).
+/// single focus; which of its two panes is active is derived from the selected
+/// sidebar row (see [`App::selected_row`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Focus {
     Lists,
-    Tasks,
-}
-
-/// The three navigable regions, in `Tab` order. Derived from the focus and the
-/// sidebar cursor rather than stored; used to cycle focus with Tab / Shift+Tab.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Section {
-    Lists,
-    Tags,
     Tasks,
 }
 
@@ -404,8 +395,8 @@ pub struct App {
     pub should_quit: bool,
     pub clickables: Clickables,
     /// Remembered sidebar cursor within each section (a list index, and a
-    /// tag index among the tags), so `Tab`/`Shift+Tab` restore your place when
-    /// cycling Lists → Tags → Tasks.
+    /// tag index among the tags), so jumping to the lists (`h`) or the tags
+    /// (`#`) restores your place in that section.
     last_list_row: usize,
     last_tag_row: usize,
 }
@@ -918,79 +909,40 @@ impl App {
 
     // --- navigation ----------------------------------------------------------
 
-    /// Which region currently has focus, treating the two sidebar panes as
-    /// distinct: a tag row selected means the Tags section, otherwise Lists.
-    fn current_section(&self) -> Section {
-        if self.focus == Focus::Tasks {
-            Section::Tasks
-        } else if matches!(self.selected_row(), Some(SidebarRow::Tag(_))) {
-            Section::Tags
-        } else {
-            Section::Lists
+    /// Toggle keyboard focus between the sidebar and the tasks pane. The sidebar
+    /// cursor stays put, so toggling back returns to the same list or tag — Tab
+    /// from a selected list drops straight into that list's tasks.
+    pub fn toggle_focus(&mut self) {
+        match self.focus {
+            Focus::Lists => self.focus_tasks(),
+            Focus::Tasks => self.focus = Focus::Lists,
         }
     }
 
-    /// Cycle focus through the three regions in `Tab` order — Lists → Tags →
-    /// Tasks and back — with `forward` reversed by Shift+Tab. Tags are skipped
-    /// when none exist, so it degrades to the old Lists ↔ Tasks toggle. Your
-    /// place in each sidebar section is remembered and restored.
-    pub fn cycle_focus(&mut self, forward: bool) {
-        // Snapshot where we are in the section we're leaving, from the live
-        // cursor (so any j/k movement is captured), before moving on.
-        match self.current_section() {
-            Section::Lists => {
-                if let Some(i) = self.selected_list_index() {
-                    self.last_list_row = i;
-                }
-            }
-            Section::Tags => {
-                if let Some(i) = self.list_state.selected() {
-                    self.last_tag_row = i.saturating_sub(self.lists.len());
-                }
-            }
-            Section::Tasks => {}
+    /// Jump the sidebar cursor onto the tag rows, restoring the last tag you were
+    /// on. A no-op when there are no tags.
+    pub fn focus_tags(&mut self) {
+        let n = self.all_tags().len();
+        if n == 0 {
+            return;
         }
-
-        let order: &[Section] = if self.all_tags().is_empty() {
-            &[Section::Lists, Section::Tasks]
-        } else {
-            &[Section::Lists, Section::Tags, Section::Tasks]
-        };
-        let pos = order
-            .iter()
-            .position(|s| *s == self.current_section())
-            .unwrap_or(0);
-        let len = order.len();
-        let next = if forward {
-            (pos + 1) % len
-        } else {
-            (pos + len - 1) % len
-        };
-        self.enter_section(order[next]);
+        self.remember_sidebar_row();
+        self.focus = Focus::Lists;
+        let idx = self.lists.len() + self.last_tag_row.min(n - 1);
+        self.set_sidebar_row_reset(idx);
     }
 
-    /// Move focus (and, for the sidebar sections, the cursor) into `section`,
-    /// restoring the remembered position there.
-    fn enter_section(&mut self, section: Section) {
-        match section {
-            Section::Lists => {
-                self.focus = Focus::Lists;
-                if self.lists.is_empty() {
-                    self.list_state.select(None);
-                } else {
-                    let idx = self.last_list_row.min(self.lists.len() - 1);
-                    self.set_sidebar_row_reset(idx);
+    /// Remember the current sidebar cursor within its section (a list or a tag),
+    /// so a later `focus_lists` / `focus_tags` restores your place there.
+    fn remember_sidebar_row(&mut self) {
+        match self.selected_row() {
+            Some(SidebarRow::List(i)) => self.last_list_row = i,
+            Some(SidebarRow::Tag(_)) => {
+                if let Some(sel) = self.list_state.selected() {
+                    self.last_tag_row = sel.saturating_sub(self.lists.len());
                 }
             }
-            Section::Tags => {
-                self.focus = Focus::Lists;
-                let n = self.all_tags().len();
-                if n > 0 {
-                    let idx = self.lists.len() + self.last_tag_row.min(n - 1);
-                    self.set_sidebar_row_reset(idx);
-                }
-            }
-            Section::Tasks => self.focus_tasks(),
+            None => {}
         }
     }
 
@@ -1049,8 +1001,17 @@ impl App {
         self.subtask_state.select(Some(next));
     }
 
+    /// Move focus to the lists, jumping the cursor back up off the tags (if it
+    /// was there) to the last list you were on.
     pub fn focus_lists(&mut self) {
+        self.remember_sidebar_row();
         self.focus = Focus::Lists;
+        if self.lists.is_empty() {
+            self.list_state.select(None);
+        } else {
+            let idx = self.last_list_row.min(self.lists.len() - 1);
+            self.set_sidebar_row_reset(idx);
+        }
     }
 
     pub fn focus_tasks(&mut self) {

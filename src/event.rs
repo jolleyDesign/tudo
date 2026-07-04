@@ -114,12 +114,12 @@ fn dispatch(app: &mut App, action: Action) {
                 app.clear_filter();
             }
         }
-        Action::ToggleFocus => app.cycle_focus(true),
-        Action::FocusPrev => app.cycle_focus(false),
+        Action::ToggleFocus => app.toggle_focus(),
         // Pane focus is meaningless inside a task's detail view.
         Action::FocusLists if !detail => app.focus_lists(),
         Action::FocusTasks if !detail => app.focus_tasks(),
-        Action::FocusLists | Action::FocusTasks => {}
+        Action::FocusTags if !detail => app.focus_tags(),
+        Action::FocusLists | Action::FocusTasks | Action::FocusTags => {}
         Action::MoveDown => app.move_selection(1),
         Action::MoveUp => app.move_selection(-1),
         Action::ReorderDown => app.reorder_selection(1),

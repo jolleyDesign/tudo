@@ -217,9 +217,8 @@ tudo writes a full `keybindings` block into your `config.json` (on first run, an
 
 | Action | Default | Does |
 |--------|---------|------|
-| `toggle-focus` | `tab` | cycle focus forward: Lists → Tags → Tasks |
-| `focus-prev` | `backtab` | cycle focus backward (Shift+Tab) |
-| `focus-lists` / `focus-tasks` | `h`/`left`, `l`/`right` | jump to the sidebar / the Tasks pane |
+| `toggle-focus` | `tab` / `backtab` | toggle focus between the sidebar and the Tasks pane |
+| `focus-lists` / `focus-tasks` / `focus-tags` | `h`/`left`, `l`/`right`, `#` | jump to the lists / the Tasks pane / the tags |
 | `move-down` / `move-up` | `j`/`down`, `k`/`up` | move the selection |
 | `activate` | `enter` | open a task's detail / drill into a list |
 | `back` | `esc` | close a dialog / leave detail / clear the filter |

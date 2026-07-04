@@ -1417,7 +1417,7 @@ fn status_filter_composes_with_the_tag_view() {
 }
 
 #[test]
-fn tab_cycles_lists_tags_tasks_and_shift_tab_reverses() {
+fn tab_toggles_between_the_sidebar_and_tasks_without_touching_tags() {
     let dir = tempfile::tempdir().unwrap();
     let mut app = app_in(dir.path());
     app.add_list("Work".to_string());
@@ -1428,23 +1428,36 @@ fn tab_cycles_lists_tags_tasks_and_shift_tab_reverses() {
     app.select_list_index(0);
     assert_eq!(app.current_view(), Some(View::List(0)));
 
-    // Tab forward: Lists → Tags → Tasks → Lists.
-    app.cycle_focus(true);
-    assert_eq!(app.focus, Focus::Lists);
-    assert_eq!(app.current_view(), Some(View::Tag("x".to_string())));
-    app.cycle_focus(true);
+    // Tab drops straight into the selected list's tasks — not the tags — and
+    // toggling back leaves the same list selected.
+    app.toggle_focus();
     assert_eq!(app.focus, Focus::Tasks);
-    app.cycle_focus(true);
+    assert_eq!(app.current_view(), Some(View::List(0)));
+    app.toggle_focus();
     assert_eq!(app.focus, Focus::Lists);
     assert_eq!(app.current_view(), Some(View::List(0)));
-
-    // Shift+Tab reverses: from Lists straight to Tasks (its backward neighbour).
-    app.cycle_focus(false);
-    assert_eq!(app.focus, Focus::Tasks);
 }
 
 #[test]
-fn tab_skips_the_tags_section_when_there_are_none() {
+fn focus_tags_jumps_to_the_tags_and_focus_lists_returns() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app_in(dir.path());
+    app.add_list("Work".to_string());
+    app.add_task("t #x".to_string());
+    app.focus_lists();
+    app.select_list_index(0);
+    assert_eq!(app.current_view(), Some(View::List(0)));
+
+    // `#` jumps the sidebar cursor onto the tag; `h` brings it back to the list.
+    app.focus_tags();
+    assert_eq!(app.focus, Focus::Lists);
+    assert_eq!(app.current_view(), Some(View::Tag("x".to_string())));
+    app.focus_lists();
+    assert_eq!(app.current_view(), Some(View::List(0)));
+}
+
+#[test]
+fn focus_tags_is_a_noop_when_there_are_no_tags() {
     let dir = tempfile::tempdir().unwrap();
     let mut app = app_in(dir.path());
     app.add_list("Work".to_string());
@@ -1452,16 +1465,14 @@ fn tab_skips_the_tags_section_when_there_are_none() {
     app.focus_lists();
     app.select_list_index(0);
 
-    // Only two stops, so it behaves like the old Lists ↔ Tasks toggle.
-    app.cycle_focus(true);
-    assert_eq!(app.focus, Focus::Tasks);
-    app.cycle_focus(true);
+    // Nothing to focus, so the cursor stays on the list.
+    app.focus_tags();
     assert_eq!(app.focus, Focus::Lists);
     assert_eq!(app.current_view(), Some(View::List(0)));
 }
 
 #[test]
-fn cycling_focus_restores_your_place_in_each_sidebar_section() {
+fn hopping_between_lists_and_tags_restores_your_place() {
     let dir = tempfile::tempdir().unwrap();
     let mut app = app_in(dir.path());
     app.add_list("Alpha".to_string());
@@ -1469,18 +1480,17 @@ fn cycling_focus_restores_your_place_in_each_sidebar_section() {
     app.select_list_index(0);
     app.add_task("a #x".to_string());
 
-    // Sit on Beta (list 1), then cycle all the way around.
+    // Sit on Beta (list 1), hop to the tags and back — land on Beta, not Alpha.
     app.focus_lists();
     app.select_list_index(1);
-    app.cycle_focus(true); // → Tags
+    app.focus_tags();
     assert_eq!(app.current_view(), Some(View::Tag("x".to_string())));
-    app.cycle_focus(true); // → Tasks
-    app.cycle_focus(true); // → Lists, and back on Beta, not Alpha
+    app.focus_lists();
     assert_eq!(app.current_view(), Some(View::List(1)));
 }
 
 #[test]
-fn tab_and_backtab_keys_drive_the_focus_cycle() {
+fn tab_key_toggles_and_hash_key_jumps_to_the_tags() {
     let dir = tempfile::tempdir().unwrap();
     let mut app = app_in(dir.path());
     app.add_list("Work".to_string());
@@ -1488,12 +1498,17 @@ fn tab_and_backtab_keys_drive_the_focus_cycle() {
     app.focus_lists();
     app.select_list_index(0);
 
-    // Tab forward onto the tag, BackTab (Shift+Tab) reverses back to the list.
+    // Tab / BackTab (Shift+Tab) both toggle sidebar ↔ tasks, keeping the list.
     event::handle_key(&mut app, KeyEvent::from(KeyCode::Tab));
-    assert_eq!(app.current_view(), Some(View::Tag("x".to_string())));
+    assert_eq!(app.focus, Focus::Tasks);
+    assert_eq!(app.current_view(), Some(View::List(0)));
     event::handle_key(&mut app, KeyEvent::from(KeyCode::BackTab));
     assert_eq!(app.focus, Focus::Lists);
     assert_eq!(app.current_view(), Some(View::List(0)));
+
+    // `#` jumps straight to the tag.
+    event::handle_key(&mut app, KeyEvent::from(KeyCode::Char('#')));
+    assert_eq!(app.current_view(), Some(View::Tag("x".to_string())));
 }
 
 #[test]
