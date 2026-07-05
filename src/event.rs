@@ -4,7 +4,9 @@ use ratatui::crossterm::event::{
     KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
 
-use crate::app::{App, ConfirmAction, CopyWhat, Focus, InputField, Mode, NotesFocus, Tab};
+use crate::app::{
+    App, ConfirmAction, CopyWhat, Focus, InputField, Mode, NoteCopyWhat, NotesFocus, Tab,
+};
 use crate::config;
 use crate::keybind::Action;
 
@@ -30,6 +32,7 @@ pub fn handle_key(app: &mut App, key: KeyEvent) {
         Mode::SortPicker(_) => sort_picker_key(app, key),
         Mode::NoteSortPicker(_) => note_sort_picker_key(app, key),
         Mode::NoteMovePicker(_) => note_move_picker_key(app, key),
+        Mode::NoteCopyMenu(_) => note_copy_menu_key(app, key),
         Mode::Settings => settings_key(app, key),
         Mode::Help => app.close_overlay(),
         Mode::Normal | Mode::Detail => nav_key(app, key),
@@ -72,6 +75,19 @@ fn note_move_picker_key(app: &mut App, key: KeyEvent) {
         KeyCode::Char('k') | KeyCode::Up => app.note_move_picker_move(-1),
         KeyCode::Enter => app.note_move_picker_confirm(),
         KeyCode::Esc | KeyCode::Char('q') => app.note_move_picker_cancel(),
+        _ => {}
+    }
+}
+
+fn note_copy_menu_key(app: &mut App, key: KeyEvent) {
+    match key.code {
+        KeyCode::Char('j') | KeyCode::Down => app.note_copy_menu_move(1),
+        KeyCode::Char('k') | KeyCode::Up => app.note_copy_menu_move(-1),
+        KeyCode::Char('1') => app.note_copy_selected(NoteCopyWhat::Body),
+        KeyCode::Char('2') => app.note_copy_selected(NoteCopyWhat::Title),
+        KeyCode::Char('3') => app.note_copy_selected(NoteCopyWhat::Markdown),
+        KeyCode::Enter => app.note_copy_menu_confirm(),
+        KeyCode::Esc | KeyCode::Char('q') => app.note_copy_menu_cancel(),
         _ => {}
     }
 }
@@ -227,8 +243,8 @@ fn dispatch_notes(app: &mut App, action: Action) {
         Action::FocusLists | Action::FocusTasks | Action::FocusTags => {}
         Action::MoveDown => app.note_move_selection(1),
         Action::MoveUp => app.note_move_selection(-1),
-        Action::ReorderDown => app.reorder_note(1),
-        Action::ReorderUp => app.reorder_note(-1),
+        Action::ReorderDown => app.note_reorder_selection(1),
+        Action::ReorderUp => app.note_reorder_selection(-1),
         Action::SendTop => app.send_note(true),
         Action::SendBottom => app.send_note(false),
         Action::Activate => app.note_activate(),
@@ -241,6 +257,7 @@ fn dispatch_notes(app: &mut App, action: Action) {
         Action::ExternalEdit => app.open_note_in_editor(),
         Action::Archive => app.note_archive_selection(),
         Action::MoveTask => app.start_move_note(),
+        Action::Copy => app.start_note_copy(),
         Action::Delete => app.start_delete_note(),
         Action::Search => app.start_note_search(),
         Action::SortPicker => app.open_note_sort_picker(),
@@ -250,7 +267,6 @@ fn dispatch_notes(app: &mut App, action: Action) {
         | Action::SetPoints
         | Action::SetDue
         | Action::AddSubtask
-        | Action::Copy
         | Action::CycleFilter => {}
         // Handled by the tab router before reaching here.
         Action::SwitchToTasks | Action::SwitchToNotes => {}
@@ -268,8 +284,7 @@ fn is_note_action(action: Action) -> bool {
             | Action::SetNotes
             | Action::SetTags
             | Action::MoveTask
-            | Action::ReorderDown
-            | Action::ReorderUp
+            | Action::Copy
             | Action::SendTop
             | Action::SendBottom
     )
@@ -318,8 +333,21 @@ fn input_key(app: &mut App, key: KeyEvent) {
             KeyCode::Char('s') if input.multiline && ctrl => step = Step::Commit,
             KeyCode::Char(c) => input.insert(c),
             KeyCode::Backspace => input.backspace(),
+            KeyCode::Delete => input.delete(),
             KeyCode::Left => input.left(),
             KeyCode::Right => input.right(),
+            KeyCode::Up if input.multiline => input.up(),
+            KeyCode::Down if input.multiline => input.down(),
+            KeyCode::PageUp if input.multiline => {
+                for _ in 0..10 {
+                    input.up();
+                }
+            }
+            KeyCode::PageDown if input.multiline => {
+                for _ in 0..10 {
+                    input.down();
+                }
+            }
             KeyCode::Home => input.home(),
             KeyCode::End => input.end(),
             _ => {}
@@ -470,6 +498,27 @@ fn first_run_key(app: &mut App, key: KeyEvent) {
 
 /// Handle a mouse event using the clickable rects recorded during render.
 pub fn handle_mouse(app: &mut App, m: MouseEvent) {
+    // The scroll wheel navigates the full-screen note editor by moving the
+    // cursor a few lines (the view follows it), like scrolling moves the
+    // selection elsewhere.
+    if matches!(&app.mode, Mode::Input(input) if input.field == InputField::NoteBody) {
+        if let Mode::Input(input) = &mut app.mode {
+            match m.kind {
+                MouseEventKind::ScrollDown => {
+                    for _ in 0..3 {
+                        input.down();
+                    }
+                }
+                MouseEventKind::ScrollUp => {
+                    for _ in 0..3 {
+                        input.up();
+                    }
+                }
+                _ => {}
+            }
+        }
+        return;
+    }
     if !matches!(app.mode, Mode::Normal | Mode::Detail) {
         return;
     }

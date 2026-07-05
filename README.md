@@ -214,11 +214,13 @@ equivalent):
 |-----|--------|
 | `a` / `A` | add a note / add a notebook — type `#tag` tokens in the note title to tag it (like the task quick-add) |
 | `e` | edit the note's title, or rename the notebook when the Notebooks pane is focused |
-| `Enter` / `n` | open the full-screen body editor (`Enter` for a newline; `Esc` or `Ctrl+S` saves & closes) |
+| `Enter` / `n` | open the full-screen body editor — arrow keys & `PageUp`/`Down` (and the scroll wheel) navigate and it scrolls for long notes; `Enter` inserts a newline; `Esc` or `Ctrl+S` saves & closes |
 | `E` | open the selected note in your `$EDITOR` (`$VISUAL`/`$EDITOR`, falling back to `vi`) |
 | `t` | edit the note's tags |
 | `*` | pin / unpin the note (pinned notes float to the top) |
-| `J`/`K`, `g`/`G` | reorder / send to top or bottom (manual sort only) |
+| `J`/`K` | reorder the selected note — or the notebook, when the Notebooks pane is focused (manual sort only) |
+| `g`/`G` | send the selected note to the top / bottom (manual sort only) |
+| `c` | copy the note (menu: body / title / full markdown) |
 | `/` | search notes (title, body, tags) |
 | `o` | sort notes (manual / A–Z / created / modified; `r` flips direction) |
 | `d` | archive the selected note |

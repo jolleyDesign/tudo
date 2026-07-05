@@ -41,6 +41,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
         Mode::SortPicker(_) => render_sort_picker(f, app),
         Mode::NoteSortPicker(_) => render_note_sort_picker(f, app),
         Mode::NoteMovePicker(_) => render_note_move_picker(f, app),
+        Mode::NoteCopyMenu(_) => render_note_copy_menu(f, app),
         Mode::Settings => render_settings(f, app),
         Mode::Help => render_help(f, app),
         _ => {}
@@ -1212,12 +1213,35 @@ fn render_note_body_editor(f: &mut Frame, app: &App, input: &crate::app::InputSt
     // Reserve the last inner row for the key hint; text fills the rest.
     let [text_area, hint_area] =
         Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(block_inner);
+    let width = text_area.width.max(1);
+    let height = text_area.height.max(1);
+
+    // Cursor's (row, col) using a hard char-wrap at the pane width — the same
+    // model drives both the on-screen cursor and the vertical scroll, so they
+    // stay in lockstep.
+    let (mut crow, mut ccol) = (0u16, 0u16);
+    for ch in input.buffer.chars().take(input.cursor) {
+        if ch == '\n' {
+            crow += 1;
+            ccol = 0;
+        } else {
+            ccol += 1;
+            if ccol >= width {
+                ccol = 0;
+                crow += 1;
+            }
+        }
+    }
+    // Scroll so the cursor row stays on screen.
+    let scroll_y = crow.saturating_sub(height - 1);
 
     // `split('\n')` (not `lines()`) so a trailing newline shows as a blank last
     // line and the cursor can sit on it.
     let body_lines: Vec<Line> = input.buffer.split('\n').map(markdown_line).collect();
     f.render_widget(
-        Paragraph::new(Text::from(body_lines)).wrap(Wrap { trim: false }),
+        Paragraph::new(Text::from(body_lines))
+            .wrap(Wrap { trim: false })
+            .scroll((scroll_y, 0)),
         text_area,
     );
     f.render_widget(
@@ -1228,24 +1252,9 @@ fn render_note_body_editor(f: &mut Frame, app: &App, input: &crate::app::InputSt
         hint_area,
     );
 
-    // Place the cursor, wrapping the same way the paragraph does.
-    let mut x = text_area.x;
-    let mut y = text_area.y;
-    for ch in input.buffer.chars().take(input.cursor) {
-        if ch == '\n' {
-            y += 1;
-            x = text_area.x;
-        } else {
-            x += 1;
-            if x >= text_area.x + text_area.width {
-                x = text_area.x;
-                y += 1;
-            }
-        }
-    }
     f.set_cursor_position((
-        x.min(text_area.x + text_area.width.saturating_sub(1)),
-        y.min(text_area.y + text_area.height.saturating_sub(1)),
+        (text_area.x + ccol).min(text_area.x + width - 1),
+        text_area.y + (crow - scroll_y),
     ));
 }
 
@@ -1516,6 +1525,7 @@ fn render_help(f: &mut Frame, app: &App) {
                 header("Find"),
                 row(&keys_for(app, &[Action::Search]), "search", LW),
                 row(&keys_for(app, &[Action::SortPicker]), "sort notes", LW),
+                row(&keys_for(app, &[Action::Copy]), "copy note", LW),
             ],
             vec![
                 header("Create & edit"),
@@ -1648,6 +1658,53 @@ fn render_move_picker(f: &mut Frame, app: &App) {
     lines.push(Line::raw(""));
     lines.push(Line::from(Span::styled(
         "\u{2191}/\u{2193} choose \u{00b7} Enter move \u{00b7} Esc cancel",
+        Style::default().fg(theme::muted()),
+    )));
+
+    f.render_widget(Paragraph::new(Text::from(lines)), inner);
+}
+
+fn render_note_copy_menu(f: &mut Frame, app: &App) {
+    let Mode::NoteCopyMenu(state) = &app.mode else {
+        return;
+    };
+    let options = crate::app::NoteCopyWhat::all();
+    let area = centered_rect(f.area(), 56, options.len() as u16 + 6);
+    overlay_clear(f, area);
+    let block = overlay_block("Copy", theme::accent());
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+
+    let title = app
+        .current_note()
+        .map(|n| n.title.clone())
+        .unwrap_or_default();
+    let mut lines: Vec<Line> = vec![
+        Line::from(Span::styled(
+            format!("Copy from \u{201c}{title}\u{201d}:"),
+            Style::default().fg(theme::muted()),
+        )),
+        Line::raw(""),
+    ];
+    for (i, what) in options.iter().enumerate() {
+        let selected = i == state.selected;
+        let marker = if selected { "\u{258e} " } else { "  " };
+        let name_style = if selected {
+            Style::default()
+                .fg(theme::accent())
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(theme::fg())
+        };
+        lines.push(Line::from(vec![
+            Span::styled(marker, Style::default().fg(theme::accent())),
+            Span::styled(format!("{}  ", i + 1), Style::default().fg(theme::muted())),
+            Span::styled(what.label().to_string(), name_style),
+        ]));
+    }
+    lines.push(Line::raw(""));
+    lines.push(Line::from(Span::styled(
+        "\u{2191}/\u{2193} choose \u{00b7} 1-3 quick \u{00b7} Enter copy \u{00b7} Esc cancel",
         Style::default().fg(theme::muted()),
     )));
 

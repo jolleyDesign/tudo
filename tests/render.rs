@@ -405,6 +405,48 @@ fn markdown_markers_are_dimmed_in_the_editor() {
 }
 
 #[test]
+fn long_note_editor_scrolls_to_the_cursor() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = App::new(Some(dir.path().to_path_buf())).unwrap();
+    app.switch_tab(Tab::Notes);
+    app.add_notebook("N".to_string());
+    app.add_note("T".to_string());
+    let body = (0..100)
+        .map(|i| format!("line {i}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    app.set_current_note_body(body);
+    app.note_focus_notes();
+    app.note_activate(); // opens editor with the cursor at the end
+
+    let text = render_to_string(&mut app, 80, 20);
+    assert!(text.contains("line 99"), "should scroll to the end: {text}");
+    assert!(!text.contains("line 0"), "the top should be scrolled off");
+}
+
+#[test]
+fn note_copy_menu_renders() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = App::new(Some(dir.path().to_path_buf())).unwrap();
+    app.switch_tab(Tab::Notes);
+    app.add_notebook("N".to_string());
+    app.add_note("Copy me".to_string());
+    app.note_focus_notes();
+    app.start_note_copy();
+
+    let text = render_to_string(&mut app, 80, 24);
+    assert!(text.contains("Copy me"), "note title in menu: {text}");
+    assert!(
+        text.contains("Body (markdown)"),
+        "body option missing: {text}"
+    );
+    assert!(
+        text.contains("Full note"),
+        "markdown option missing: {text}"
+    );
+}
+
+#[test]
 fn note_sort_picker_renders() {
     let dir = tempfile::tempdir().unwrap();
     let mut app = App::new(dir.path().to_path_buf().into()).unwrap();

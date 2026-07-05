@@ -701,6 +701,9 @@ pub struct Notebook {
     pub notes: Vec<Note>,
     /// Folder name on disk. Set from the directory name on load.
     pub slug: String,
+    /// Explicit sidebar position. `None` sorts alphabetically after any
+    /// explicitly-ordered notebooks. Persisted in `notes/.order`, not per-note.
+    pub order: Option<u32>,
 }
 
 impl Notebook {
@@ -709,6 +712,7 @@ impl Notebook {
             name: name.into(),
             notes: Vec::new(),
             slug: String::new(),
+            order: None,
         }
     }
 

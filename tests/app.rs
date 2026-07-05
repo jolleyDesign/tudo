@@ -2,10 +2,10 @@
 
 use std::path::PathBuf;
 
-use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
 use tudo::app::{
-    App, CopyWhat, Focus, InputField, Mode, NoteSidebarRow, NoteView, NotesFocus, SidebarRow,
-    StatusFilter, Tab, View,
+    App, CopyWhat, Focus, InputField, Mode, NoteCopyWhat, NoteSidebarRow, NoteView, NotesFocus,
+    SidebarRow, StatusFilter, Tab, View,
 };
 use tudo::keybind::{Keymap, Overrides};
 use tudo::model::{NoteSort, Priority, Sort, SortDir};
@@ -1879,6 +1879,118 @@ fn archived_notebook_cannot_be_renamed_or_deleted() {
     assert!(matches!(app.mode, Mode::Normal), "rename refused");
     app.start_delete_note();
     assert!(matches!(app.mode, Mode::Normal), "delete refused");
+}
+
+#[test]
+fn multiline_editor_supports_up_and_delete() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app_in(dir.path());
+    app.switch_tab(Tab::Notes);
+    app.add_notebook("N".to_string());
+    app.add_note("t".to_string());
+    app.note_focus_notes();
+    app.start_edit_note_body();
+
+    // Type "abc", newline, "de" -> cursor at end of the second line.
+    type_str(&mut app, "abc");
+    event::handle_key(&mut app, KeyEvent::from(KeyCode::Enter));
+    type_str(&mut app, "de");
+
+    // Up keeps the column (2), landing between 'b' and 'c' on the first line.
+    event::handle_key(&mut app, KeyEvent::from(KeyCode::Up));
+    let Mode::Input(input) = &app.mode else {
+        panic!("not editing");
+    };
+    assert_eq!(input.cursor, 2);
+
+    // Delete removes the character under the cursor ('c').
+    event::handle_key(&mut app, KeyEvent::from(KeyCode::Delete));
+    let Mode::Input(input) = &app.mode else {
+        panic!("not editing");
+    };
+    assert_eq!(input.buffer, "ab\nde");
+}
+
+#[test]
+fn scroll_wheel_moves_the_cursor_in_the_note_editor() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app_in(dir.path());
+    app.switch_tab(Tab::Notes);
+    app.add_notebook("N".to_string());
+    app.add_note("t".to_string());
+    app.set_current_note_body("l0\nl1\nl2\nl3\nl4\nl5".to_string());
+    app.note_focus_notes();
+    app.note_activate(); // full-screen editor, cursor at the end
+
+    let before = match &app.mode {
+        Mode::Input(i) => i.cursor,
+        _ => panic!("not editing"),
+    };
+    let scroll = |kind| MouseEvent {
+        kind,
+        column: 5,
+        row: 5,
+        modifiers: KeyModifiers::NONE,
+    };
+    event::handle_mouse(&mut app, scroll(MouseEventKind::ScrollUp));
+    let after = match &app.mode {
+        Mode::Input(i) => i.cursor,
+        _ => panic!("not editing"),
+    };
+    assert!(after < before, "scrolling up moved the cursor up");
+}
+
+#[test]
+fn reordering_notebooks_persists() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app_in(dir.path());
+    app.switch_tab(Tab::Notes);
+    app.add_notebook("Alpha".to_string());
+    app.add_notebook("Beta".to_string());
+    app.add_notebook("Gamma".to_string());
+
+    let names = |a: &App| {
+        a.notebooks
+            .iter()
+            .map(|n| n.name.clone())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(names(&app), vec!["Alpha", "Beta", "Gamma"]);
+
+    // Focus the notebooks pane, select Alpha, and nudge it down twice via `J`.
+    app.note_focus_notebooks();
+    app.notebook_state.select(Some(0));
+    event::handle_key(&mut app, KeyEvent::from(KeyCode::Char('J')));
+    assert_eq!(names(&app), vec!["Beta", "Alpha", "Gamma"]);
+    event::handle_key(&mut app, KeyEvent::from(KeyCode::Char('J')));
+    assert_eq!(names(&app), vec!["Beta", "Gamma", "Alpha"]);
+
+    // The manual order survives a reload.
+    let reloaded = app_in(dir.path());
+    assert_eq!(names(&reloaded), vec!["Beta", "Gamma", "Alpha"]);
+}
+
+#[test]
+fn note_copy_payload_builds_body_title_and_markdown() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app_in(dir.path());
+    app.switch_tab(Tab::Notes);
+    app.add_notebook("N".to_string());
+    app.add_note("Title here #tag".to_string());
+    app.set_current_note_body("body line".to_string());
+
+    assert_eq!(
+        app.note_copy_payload(NoteCopyWhat::Title).unwrap(),
+        "Title here"
+    );
+    assert_eq!(
+        app.note_copy_payload(NoteCopyWhat::Body).unwrap(),
+        "body line"
+    );
+    let md = app.note_copy_payload(NoteCopyWhat::Markdown).unwrap();
+    assert!(md.contains("title: Title here"), "frontmatter: {md}");
+    assert!(md.contains("tags: [tag]"), "tags: {md}");
+    assert!(md.contains("body line"), "body: {md}");
 }
 
 #[test]

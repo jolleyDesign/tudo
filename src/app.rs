@@ -228,6 +228,58 @@ impl InputState {
     pub fn end(&mut self) {
         self.cursor = self.buffer.chars().count();
     }
+
+    /// Forward-delete the character under the cursor (the `Delete` key).
+    pub fn delete(&mut self) {
+        let n = self.buffer.chars().count();
+        if self.cursor < n {
+            let start = self.byte_at(self.cursor);
+            let end = self.byte_at(self.cursor + 1);
+            self.buffer.replace_range(start..end, "");
+        }
+    }
+
+    /// Move the cursor up one logical line, keeping the column where possible.
+    /// Only meaningful for multiline inputs.
+    pub fn up(&mut self) {
+        let chars: Vec<char> = self.buffer.chars().collect();
+        let cur_start = line_start_of(&chars, self.cursor);
+        if cur_start == 0 {
+            self.cursor = 0;
+            return;
+        }
+        let col = self.cursor - cur_start;
+        let prev_start = line_start_of(&chars, cur_start - 1);
+        let prev_len = (cur_start - 1) - prev_start;
+        self.cursor = prev_start + col.min(prev_len);
+    }
+
+    /// Move the cursor down one logical line, keeping the column where possible.
+    pub fn down(&mut self) {
+        let chars: Vec<char> = self.buffer.chars().collect();
+        let n = chars.len();
+        let cur_start = line_start_of(&chars, self.cursor);
+        let col = self.cursor - cur_start;
+        let cur_end = (cur_start..n).find(|&i| chars[i] == '\n').unwrap_or(n);
+        if cur_end == n {
+            self.cursor = n;
+            return;
+        }
+        let next_start = cur_end + 1;
+        let next_end = (next_start..n).find(|&i| chars[i] == '\n').unwrap_or(n);
+        self.cursor = next_start + col.min(next_end - next_start);
+    }
+}
+
+/// Character index of the start of the logical line containing `cursor`.
+fn line_start_of(chars: &[char], cursor: usize) -> usize {
+    let mut start = 0;
+    for (i, &c) in chars.iter().enumerate().take(cursor) {
+        if c == '\n' {
+            start = i + 1;
+        }
+    }
+    start
 }
 
 /// What a pending [`Mode::Confirm`] will do if accepted.
@@ -330,6 +382,43 @@ impl CopyWhat {
     }
 }
 
+/// What part of the selected note a copy action puts on the clipboard.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NoteCopyWhat {
+    /// The markdown body (no frontmatter).
+    Body,
+    /// Just the note title.
+    Title,
+    /// The whole note file, frontmatter included.
+    Markdown,
+}
+
+impl NoteCopyWhat {
+    pub fn all() -> [NoteCopyWhat; 3] {
+        [
+            NoteCopyWhat::Body,
+            NoteCopyWhat::Title,
+            NoteCopyWhat::Markdown,
+        ]
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            NoteCopyWhat::Body => "Body (markdown)",
+            NoteCopyWhat::Title => "Title",
+            NoteCopyWhat::Markdown => "Full note (with frontmatter)",
+        }
+    }
+
+    fn noun(self) -> &'static str {
+        match self {
+            NoteCopyWhat::Body => "body",
+            NoteCopyWhat::Title => "title",
+            NoteCopyWhat::Markdown => "note markdown",
+        }
+    }
+}
+
 /// State for the "copy selected task" menu overlay.
 #[derive(Debug, Clone)]
 pub struct CopyMenuState {
@@ -362,6 +451,7 @@ pub enum Mode {
     SortPicker(SortPickerState),
     NoteSortPicker(SortPickerState),
     NoteMovePicker(MovePickerState),
+    NoteCopyMenu(CopyMenuState),
     Settings,
     Help,
 }
@@ -708,6 +798,13 @@ impl App {
                 }
             }
         }
+        // Preserve the manual notebook order in the new location.
+        let ordered: Vec<String> = notebooks
+            .iter()
+            .filter(|n| !n.is_archive())
+            .map(|n| n.slug.clone())
+            .collect();
+        let _ = storage::save_notebook_order(&new, &ordered);
         // Then remove the originals.
         for list in &lists {
             let _ = storage::delete_list_file(&old, list);
@@ -2656,8 +2753,62 @@ impl App {
             .sort_by(|a, b| match (a.is_archive(), b.is_archive()) {
                 (true, false) => std::cmp::Ordering::Greater,
                 (false, true) => std::cmp::Ordering::Less,
-                _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
+                _ => a
+                    .order
+                    .unwrap_or(u32::MAX)
+                    .cmp(&b.order.unwrap_or(u32::MAX))
+                    .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase())),
             });
+    }
+
+    /// Give every non-archive notebook an explicit `order` matching its current
+    /// position and persist the order file. Called after a reorder so it sticks.
+    fn renumber_notebooks(&mut self) {
+        let mut slugs = Vec::new();
+        let mut next = 0u32;
+        for nb in self.notebooks.iter_mut() {
+            if nb.is_archive() {
+                continue;
+            }
+            nb.order = Some(next);
+            slugs.push(nb.slug.clone());
+            next += 1;
+        }
+        if let Err(e) = storage::save_notebook_order(&self.data_dir, &slugs) {
+            self.set_status(format!("save error: {e}"));
+        }
+    }
+
+    /// Focus-aware reorder on the Notes tab: nudge the selected notebook (on the
+    /// notebooks pane) or note (on the notes pane) by `delta`.
+    pub fn note_reorder_selection(&mut self, delta: isize) {
+        match self.notes_focus {
+            NotesFocus::Notebooks => self.reorder_notebook(delta),
+            NotesFocus::Notes => self.reorder_note(delta),
+        }
+    }
+
+    /// Swap the selected notebook with its neighbour `delta` slots away and
+    /// persist. No-op on a tag row, in the full-screen editor, at the ends, or
+    /// involving the pinned Archived notebook.
+    pub fn reorder_notebook(&mut self, delta: isize) {
+        if self.notes_focus != NotesFocus::Notebooks || matches!(self.mode, Mode::Detail) {
+            return;
+        }
+        let Some(cur) = self.selected_notebook_index() else {
+            return;
+        };
+        let target = cur as isize + delta;
+        if target < 0 || target >= self.notebooks.len() as isize {
+            return;
+        }
+        let target = target as usize;
+        if self.notebooks[cur].is_archive() || self.notebooks[target].is_archive() {
+            return;
+        }
+        self.notebooks.swap(cur, target);
+        self.renumber_notebooks();
+        self.notebook_state.select(Some(target));
     }
 
     fn archive_notebook_index(&self) -> Option<usize> {
@@ -2958,6 +3109,77 @@ impl App {
 
     pub fn note_move_picker_cancel(&mut self) {
         if let Mode::NoteMovePicker(state) = &self.mode {
+            self.mode = if state.return_detail {
+                Mode::Detail
+            } else {
+                Mode::Normal
+            };
+        }
+    }
+
+    // --- copy a note ---------------------------------------------------------
+
+    /// Open the copy menu for the selected note. No-op when there's no note.
+    pub fn start_note_copy(&mut self) {
+        if self.current_note().is_none() {
+            return;
+        }
+        self.mode = Mode::NoteCopyMenu(CopyMenuState {
+            selected: 0,
+            return_detail: matches!(self.mode, Mode::Detail),
+        });
+    }
+
+    pub fn note_copy_menu_move(&mut self, delta: isize) {
+        if let Mode::NoteCopyMenu(state) = &mut self.mode {
+            let n = NoteCopyWhat::all().len() as isize;
+            state.selected = ((((state.selected as isize + delta) % n) + n) % n) as usize;
+        }
+    }
+
+    /// The text a copy of `what` would place on the clipboard. Pure.
+    pub fn note_copy_payload(&self, what: NoteCopyWhat) -> Option<String> {
+        let note = self.current_note()?;
+        Some(match what {
+            NoteCopyWhat::Body => note.body.clone(),
+            NoteCopyWhat::Title => note.title.clone(),
+            NoteCopyWhat::Markdown => note.to_file_string(),
+        })
+    }
+
+    pub fn note_copy_menu_confirm(&mut self) {
+        if let Mode::NoteCopyMenu(state) = &self.mode {
+            self.note_copy_selected(NoteCopyWhat::all()[state.selected]);
+        }
+    }
+
+    /// Copy `what` from the selected note to the clipboard and close the menu.
+    pub fn note_copy_selected(&mut self, what: NoteCopyWhat) {
+        let return_detail = match &self.mode {
+            Mode::NoteCopyMenu(state) => state.return_detail,
+            _ => return,
+        };
+        self.mode = if return_detail {
+            Mode::Detail
+        } else {
+            Mode::Normal
+        };
+        let Some(text) = self.note_copy_payload(what) else {
+            self.set_status("nothing to copy".to_string());
+            return;
+        };
+        if what == NoteCopyWhat::Body && text.trim().is_empty() {
+            self.set_status("note has no body to copy".to_string());
+            return;
+        }
+        match crate::clipboard::copy(&text) {
+            Ok(()) => self.set_status(format!("copied {} to clipboard", what.noun())),
+            Err(e) => self.set_status(format!("copy failed: {e}")),
+        }
+    }
+
+    pub fn note_copy_menu_cancel(&mut self) {
+        if let Mode::NoteCopyMenu(state) = &self.mode {
             self.mode = if state.return_detail {
                 Mode::Detail
             } else {

@@ -185,6 +185,35 @@ pub fn note_path(data_dir: &Path, notebook_slug: &str, note_slug: &str) -> PathB
         .join(format!("{note_slug}.md"))
 }
 
+/// The file that records the manual notebook order (one slug per line). Lives
+/// inside `notes/` so it travels with the data; absent means alphabetical.
+fn notebook_order_path(data_dir: &Path) -> PathBuf {
+    notes_dir(data_dir).join(".order")
+}
+
+/// Load the saved notebook order (slugs, top to bottom). Empty if none saved.
+pub fn load_notebook_order(data_dir: &Path) -> Vec<String> {
+    std::fs::read_to_string(notebook_order_path(data_dir))
+        .map(|s| {
+            s.lines()
+                .map(str::trim)
+                .filter(|l| !l.is_empty())
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Persist the manual notebook order.
+pub fn save_notebook_order(data_dir: &Path, slugs: &[String]) -> Result<()> {
+    let dir = notes_dir(data_dir);
+    std::fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))?;
+    let path = notebook_order_path(data_dir);
+    std::fs::write(&path, slugs.join("\n"))
+        .with_context(|| format!("writing {}", path.display()))?;
+    Ok(())
+}
+
 /// Convert a filesystem modified time to a UTC timestamp, falling back to now.
 fn file_modified(path: &Path) -> DateTime<Utc> {
     std::fs::metadata(path)
@@ -246,9 +275,24 @@ pub fn load_notebooks(data_dir: &Path) -> Result<Vec<Notebook>> {
         } else {
             slug.clone()
         };
-        notebooks.push(Notebook { name, notes, slug });
+        notebooks.push(Notebook {
+            name,
+            notes,
+            slug,
+            order: None,
+        });
     }
-    notebooks.sort_by_key(|n| n.name.to_lowercase());
+    // Apply the saved manual order, then sort by (order, name) as a default.
+    let order = load_notebook_order(data_dir);
+    for nb in &mut notebooks {
+        nb.order = order.iter().position(|s| *s == nb.slug).map(|i| i as u32);
+    }
+    notebooks.sort_by(|a, b| {
+        a.order
+            .unwrap_or(u32::MAX)
+            .cmp(&b.order.unwrap_or(u32::MAX))
+            .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+    });
     Ok(notebooks)
 }
 
