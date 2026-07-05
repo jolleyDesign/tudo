@@ -1,11 +1,14 @@
 # tudo
 
-A fast, local-first todo list for your terminal. Fully keyboard-driven (with mouse support), no cloud, no accounts - your tasks are plain JSON files on your own disk.
+A fast, local-first todo list **and markdown notebook** for your terminal. Fully keyboard-driven (with mouse support), no cloud, no accounts - your tasks are plain JSON files and your notes are plain `.md` files on your own disk.
 
 ![tudo demo](v1.0.5-tudo-demo.gif)
 
 ## Features
 
+- **Two tabs — Tasks and Notes**: press `1` for Tasks, `2` for Notes. The Tasks
+  tab is the todo list below; the Notes tab is a markdown notebook (see
+  [Notes](#notes)).
 - **Multiple lists / projects**: switch between named lists in the sidebar.
 - **Rich tasks**: priority, story points, due date, tags, free-text notes, and
   one level of checkable subtasks.
@@ -28,8 +31,11 @@ A fast, local-first todo list for your terminal. Fully keyboard-driven (with mou
   click a checkbox to toggle, scroll to move.
 - **Search & filter**: substring search across titles/tags/notes and a
   status filter (all / active / done).
-- **Human-readable storage**: one pretty-printed JSON file per list, written
-  atomically so a crash can't corrupt your data.
+- **Markdown notes**: organise notes into notebooks, write them in plain
+  markdown, tag them inline (`#tag`) as you create them, pin, archive, and pop
+  any note open in your `$EDITOR` (see [Notes](#notes)).
+- **Human-readable storage**: one pretty-printed JSON file per list and one
+  `.md` file per note, written atomically so a crash can't corrupt your data.
 - **Local-first**: nothing leaves your machine.
 
 <p align="center">
@@ -95,12 +101,18 @@ created so you can begin immediately.
 
 ## Keybindings
 
-Press `?` in the app for the same list grouped into an overlay. All of these keys are [customizable](#customizing-keybindings) in the config file, and the help overlay always shows your current bindings.
+Press `?` in the app for the same list grouped into an overlay — the overlay is
+tab-aware, so on the Notes tab it shows the note bindings instead. All of these
+keys are [customizable](#customizing-keybindings) in the config file, and the
+help overlay always shows your current bindings. The tables below cover the
+**Tasks** tab; the **Notes** tab reuses the same keys for the parallel notebook /
+note operations (see [Notes](#notes)).
 
 **Navigate**
 
 | Key | Action |
 |-----|--------|
+| `1` / `2` | switch to the Tasks / Notes tab (works from either tab) |
 | `Tab` / `Shift`+`Tab` | cycle focus through Lists → Tags → Tasks (and back) |
 | `h`/`l`, `←`/`→` | jump between the sidebar and the Tasks pane |
 | `j`/`k`, `↑`/`↓` | move the selection (flows from the lists into the tags) |
@@ -178,6 +190,50 @@ recognised at a word boundary, so a plain "We won!" or "C# rewrite" keeps its
 punctuation, and anything unrecognised just stays in the title.
 
 **Mouse:** click a list or task to select it, click a task's checkbox to toggle it done, and use the scroll wheel to move within the focused pane.
+
+## Notes
+
+Press `2` (or click the **Notes** tab in the header) to switch from tasks to your
+markdown notebook. Press `1` to switch back. The layout mirrors the Tasks tab:
+**notebooks** in the sidebar (with a note-tags pane pinned below them, just like
+task tags), a **note list** top-right, and a live **preview** of the selected
+note below it. Press `Enter` on a note to open it in the **full-screen editor**
+(`Esc` or `Ctrl+S` saves and closes — it autosaves either way); for longer
+writing, `E` hands the file to your `$EDITOR`.
+
+Notes are plain markdown, and the editor and preview **dim the markup** —
+heading `#`s, list bullets, blockquote `>`s, code fences, and inline
+`` ` ``/`**` delimiters recede into a muted colour so the text you wrote stands
+out. Tags and pinning are stored in a small YAML frontmatter block at the top of
+each file, so the files stay portable and can be edited by any other tool.
+
+**Notes-tab keys** (the same keys as the Tasks tab, doing the notebook/note
+equivalent):
+
+| Key | Action |
+|-----|--------|
+| `a` / `A` | add a note / add a notebook — type `#tag` tokens in the note title to tag it (like the task quick-add) |
+| `e` | edit the note's title, or rename the notebook when the Notebooks pane is focused |
+| `Enter` / `n` | open the full-screen body editor (`Enter` for a newline; `Esc` or `Ctrl+S` saves & closes) |
+| `E` | open the selected note in your `$EDITOR` (`$VISUAL`/`$EDITOR`, falling back to `vi`) |
+| `t` | edit the note's tags |
+| `*` | pin / unpin the note (pinned notes float to the top) |
+| `J`/`K`, `g`/`G` | reorder / send to top or bottom (manual sort only) |
+| `/` | search notes (title, body, tags) |
+| `o` | sort notes (manual / A–Z / created / modified; `r` flips direction) |
+| `d` | archive the selected note |
+| `m` | move the note to another notebook (also how you unarchive) |
+| `X` | delete the selected note or notebook (asks to confirm) |
+| `#` | jump to the note-tags pane; select a tag to see every note carrying it across all notebooks |
+
+The built-in editor is full-screen; for longer writing, `E` hands the file to
+your `$EDITOR` and reloads it when you're done.
+
+Just like tasks, notes have an **Archived** notebook pinned to the bottom of the
+sidebar (dimmed): `d` tucks a note away there, `m` moves it back out to
+unarchive (or to any other notebook), and `X` deletes for good. Archived notes
+drop out of the tag view, and the Archived notebook itself can't be renamed or
+deleted.
 
 ## Themes
 
@@ -274,7 +330,31 @@ Each list is a single JSON file (`<slug>.json`) in your data directory:
 }
 ```
 
-Edit these by hand or keep them in a git repo - they're just text.
+Notes live in a `notes/` subdirectory: one folder per notebook (the folder name
+is the notebook's name), one `.md` file per note. Each note carries its metadata
+in a YAML frontmatter block:
+
+```
+notes/
+  Work Ideas/
+    api-redesign.md
+    standup-notes.md
+  Personal/
+    reading-list.md
+```
+
+```markdown
+---
+title: API redesign
+tags: [work, backend]
+pinned: true
+order: 1
+created: 2026-07-05T10:00:00Z
+---
+The body is plain markdown, starting here.
+```
+
+Edit any of these by hand or keep them in a git repo - they're just text.
 
 ## Environment variables
 

@@ -3,10 +3,11 @@
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::buffer::Buffer;
-use tudo::app::{App, Mode};
+use ratatui::crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+use tudo::app::{App, Mode, Tab};
 use tudo::keybind::{Keymap, Overrides};
 use tudo::model::Priority;
-use tudo::{theme, ui};
+use tudo::{event, theme, ui};
 
 /// Flatten the rendered buffer into a single string for substring assertions.
 fn buffer_text(buf: &Buffer) -> String {
@@ -301,6 +302,134 @@ fn help_overlay_lists_keybindings() {
     assert!(
         text.contains("press any key to close"),
         "help footer missing"
+    );
+}
+
+#[test]
+fn notes_tab_renders_tab_strip_notebooks_and_notes() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = App::new(Some(dir.path().to_path_buf())).unwrap();
+    app.switch_tab(tudo::app::Tab::Notes);
+    app.add_notebook("Journal".to_string());
+    app.add_note("Morning pages".to_string());
+
+    let text = render_to_string(&mut app, 100, 30);
+    // Tab strip is present with both tabs numbered.
+    assert!(text.contains("1 Tasks"), "tab strip missing Tasks: {text}");
+    assert!(text.contains("2 Notes"), "tab strip missing Notes: {text}");
+    // Notebook and note both show.
+    assert!(text.contains("Notebooks"), "notebooks pane missing: {text}");
+    assert!(text.contains("Journal"), "notebook name missing: {text}");
+    assert!(text.contains("Morning pages"), "note title missing: {text}");
+}
+
+#[test]
+fn opening_a_note_opens_the_fullscreen_editor() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = App::new(dir.path().to_path_buf().into()).unwrap();
+    app.switch_tab(Tab::Notes);
+    app.add_notebook("Journal".to_string());
+    app.add_note("Deep thoughts".to_string());
+    app.set_current_note_body("the body of the note".to_string());
+    app.note_focus_notes();
+    app.note_activate(); // Enter -> straight into the full-screen body editor
+
+    assert!(matches!(app.mode, Mode::Input(_)), "should be editing");
+    let text = render_to_string(&mut app, 100, 30);
+    assert!(
+        text.contains("Note · Deep thoughts"),
+        "editor title: {text}"
+    );
+    assert!(
+        text.contains("the body of the note"),
+        "body missing: {text}"
+    );
+    assert!(text.contains("Ctrl+S"), "editor hint missing: {text}");
+    // Full-screen: the sidebar is covered.
+    assert!(
+        !text.contains("Notebooks"),
+        "sidebar should be hidden: {text}"
+    );
+}
+
+#[test]
+fn clicking_the_header_tab_switches() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = App::new(Some(dir.path().to_path_buf())).unwrap();
+    // Render once so the tab-chip rects are recorded.
+    let _ = render_to_string(&mut app, 100, 30);
+    let notes_rect = app
+        .clickables
+        .tab_rects
+        .iter()
+        .find(|(t, _)| *t == Tab::Notes)
+        .map(|(_, r)| *r)
+        .expect("Notes tab rect recorded");
+
+    event::handle_mouse(
+        &mut app,
+        MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: notes_rect.x,
+            row: notes_rect.y,
+            modifiers: KeyModifiers::NONE,
+        },
+    );
+    assert_eq!(app.active_tab, Tab::Notes);
+}
+
+#[test]
+fn markdown_markers_are_dimmed_in_the_editor() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = App::new(Some(dir.path().to_path_buf())).unwrap();
+    app.switch_tab(Tab::Notes);
+    app.add_notebook("N".to_string());
+    app.add_note("T".to_string());
+    app.set_current_note_body("# Heading".to_string());
+    app.note_focus_notes();
+    app.note_activate(); // full-screen editor
+
+    let buf = render_to_buffer(&mut app, 100, 30);
+    let (col, row) = find_needle(&buf, "# Heading");
+    // The '#' marker recedes (muted); the heading text is bright (accent).
+    assert_eq!(
+        buf.cell((col, row)).unwrap().fg,
+        theme::muted(),
+        "# marker should be dimmed"
+    );
+    assert_eq!(
+        buf.cell((col + 2, row)).unwrap().fg,
+        theme::accent(),
+        "heading text should be accent"
+    );
+}
+
+#[test]
+fn note_sort_picker_renders() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = App::new(dir.path().to_path_buf().into()).unwrap();
+    app.switch_tab(tudo::app::Tab::Notes);
+    app.add_notebook("N".to_string());
+    app.open_note_sort_picker();
+
+    let text = render_to_string(&mut app, 100, 30);
+    assert!(text.contains("Sort notes"), "picker title: {text}");
+    assert!(text.contains("modified"), "sort option missing: {text}");
+}
+
+#[test]
+fn help_overlay_is_tab_aware_for_notes() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = App::new(dir.path().to_path_buf().into()).unwrap();
+    app.switch_tab(tudo::app::Tab::Notes);
+    app.mode = tudo::app::Mode::Help;
+
+    let text = render_to_string(&mut app, 100, 30);
+    assert!(text.contains("Keybindings · Notes"), "title: {text}");
+    assert!(text.contains("edit body"), "notes help row missing: {text}");
+    assert!(
+        text.contains("$EDITOR"),
+        "external-edit row missing: {text}"
     );
 }
 

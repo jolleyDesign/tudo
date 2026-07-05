@@ -68,11 +68,16 @@ pub enum Action {
     Settings,
     Help,
     Quit,
+    // Tabs & notes
+    SwitchToTasks,
+    SwitchToNotes,
+    TogglePin,
+    ExternalEdit,
 }
 
 impl Action {
     /// All actions, in canonical order.
-    pub const ALL: [Action; 33] = [
+    pub const ALL: [Action; 37] = [
         Action::ToggleFocus,
         Action::FocusLists,
         Action::FocusTasks,
@@ -106,6 +111,10 @@ impl Action {
         Action::Settings,
         Action::Help,
         Action::Quit,
+        Action::SwitchToTasks,
+        Action::SwitchToNotes,
+        Action::TogglePin,
+        Action::ExternalEdit,
     ];
 
     /// The kebab-case name used as the config key for this action.
@@ -144,6 +153,10 @@ impl Action {
             Action::Settings => "settings",
             Action::Help => "help",
             Action::Quit => "quit",
+            Action::SwitchToTasks => "switch-to-tasks",
+            Action::SwitchToNotes => "switch-to-notes",
+            Action::TogglePin => "toggle-pin",
+            Action::ExternalEdit => "external-edit",
         }
     }
 
@@ -204,6 +217,10 @@ impl Action {
             Action::Settings => vec![c(KeyCode::Char('S'))],
             Action::Help => vec![c(KeyCode::Char('?'))],
             Action::Quit => vec![c(KeyCode::Char('q'))],
+            Action::SwitchToTasks => vec![c(KeyCode::Char('1'))],
+            Action::SwitchToNotes => vec![c(KeyCode::Char('2'))],
+            Action::TogglePin => vec![c(KeyCode::Char('*'))],
+            Action::ExternalEdit => vec![c(KeyCode::Char('E'))],
         }
     }
 }

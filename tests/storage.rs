@@ -1,7 +1,7 @@
 //! Storage round-trips and pure helpers (slugify, parse_due, parse_tags).
 
-use chrono::NaiveDate;
-use tudo::model::{self, List, Priority, Task};
+use chrono::{NaiveDate, Utc};
+use tudo::model::{self, List, Note, Priority, Task};
 use tudo::storage;
 use tudo::theme::ThemeKind;
 
@@ -190,4 +190,108 @@ fn unique_slug_avoids_existing_files() {
     // Same display name -> different slug so the first file isn't clobbered.
     let second = storage::unique_slug(dir.path(), "Work");
     assert_eq!(second, "work-2");
+}
+
+// --- notes ------------------------------------------------------------------
+
+#[test]
+fn note_frontmatter_round_trips() {
+    let mut note = Note::new("API redesign");
+    note.slug = "api-redesign".to_string();
+    note.body = "First line.\n\nSecond paragraph with a colon: here.".to_string();
+    note.tags = vec!["work".to_string(), "backend".to_string()];
+    note.pinned = true;
+    note.order = Some(3);
+
+    let text = note.to_file_string();
+    assert!(text.starts_with("---\n"), "frontmatter fence: {text:?}");
+    assert!(text.contains("title: API redesign"));
+    assert!(text.contains("tags: [work, backend]"));
+    assert!(text.contains("pinned: true"));
+
+    let parsed = Note::from_file(&text, "api-redesign".to_string(), note.created);
+    assert_eq!(parsed.title, "API redesign");
+    assert_eq!(parsed.body, note.body);
+    assert_eq!(parsed.tags, vec!["work", "backend"]);
+    assert!(parsed.pinned);
+    assert_eq!(parsed.order, Some(3));
+}
+
+#[test]
+fn note_without_frontmatter_falls_back_to_heading_then_filename() {
+    // A plain markdown file (externally created) still loads.
+    let from_heading = Note::from_file("# My Heading\n\nbody", "some-file".to_string(), Utc::now());
+    assert_eq!(from_heading.title, "My Heading");
+    assert_eq!(from_heading.body, "# My Heading\n\nbody");
+
+    let from_slug = Note::from_file(
+        "just body, no heading",
+        "meeting-notes".to_string(),
+        Utc::now(),
+    );
+    assert_eq!(from_slug.title, "just body, no heading");
+
+    let empty = Note::from_file("", "reading-list".to_string(), Utc::now());
+    assert_eq!(empty.title, "reading list");
+}
+
+#[test]
+fn notebooks_and_notes_round_trip_through_disk() {
+    let dir = tempfile::tempdir().unwrap();
+    storage::create_notebook_dir(dir.path(), "Work Ideas").unwrap();
+
+    let mut note = Note::new("Sprint plan");
+    note.slug = "sprint-plan".to_string();
+    note.body = "- ship notes\n- write tests".to_string();
+    note.tags = vec!["planning".to_string()];
+    storage::save_note(dir.path(), "Work Ideas", &note).unwrap();
+
+    let notebooks = storage::load_notebooks(dir.path()).unwrap();
+    assert_eq!(notebooks.len(), 1);
+    assert_eq!(notebooks[0].name, "Work Ideas");
+    assert_eq!(notebooks[0].slug, "Work Ideas");
+    assert_eq!(notebooks[0].notes.len(), 1);
+    let loaded = &notebooks[0].notes[0];
+    assert_eq!(loaded.title, "Sprint plan");
+    assert_eq!(loaded.body, "- ship notes\n- write tests");
+    assert_eq!(loaded.tags, vec!["planning"]);
+    assert_eq!(loaded.slug, "sprint-plan");
+}
+
+#[test]
+fn parse_note_title_extracts_hash_tags() {
+    let (title, tags) = model::parse_note_title("Meeting notes #work #ideas");
+    assert_eq!(title, "Meeting notes");
+    assert_eq!(tags, vec!["work", "ideas"]);
+
+    // No `#` tokens -> the whole thing is the title, punctuation intact.
+    let (title, tags) = model::parse_note_title("Lunch @ 1pm re: C# rewrite");
+    assert_eq!(title, "Lunch @ 1pm re: C# rewrite");
+    assert!(tags.is_empty());
+
+    // Duplicates collapse and tags normalize.
+    let (_, tags) = model::parse_note_title("x #Work work #work");
+    assert_eq!(tags, vec!["work"]);
+}
+
+#[test]
+fn sanitize_and_unique_notebook_names() {
+    let dir = tempfile::tempdir().unwrap();
+    // Readable folder names are kept (spaces, case), unsafe chars dropped and
+    // any resulting whitespace runs collapsed to a single space.
+    assert_eq!(
+        storage::sanitize_notebook_name("Work / Ideas"),
+        "Work Ideas"
+    );
+    assert_eq!(
+        storage::sanitize_notebook_name("  Trip: 2026  "),
+        "Trip 2026"
+    );
+
+    storage::create_notebook_dir(dir.path(), "Personal").unwrap();
+    // A second notebook with the same name gets a numeric suffix.
+    assert_eq!(
+        storage::unique_notebook_slug(dir.path(), "Personal"),
+        "Personal 2"
+    );
 }

@@ -4,7 +4,7 @@ use ratatui::crossterm::event::{
     KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
 
-use crate::app::{App, ConfirmAction, CopyWhat, Focus, InputField, Mode};
+use crate::app::{App, ConfirmAction, CopyWhat, Focus, InputField, Mode, NotesFocus, Tab};
 use crate::config;
 use crate::keybind::Action;
 
@@ -28,6 +28,8 @@ pub fn handle_key(app: &mut App, key: KeyEvent) {
         Mode::MovePicker(_) => move_picker_key(app, key),
         Mode::CopyMenu(_) => copy_menu_key(app, key),
         Mode::SortPicker(_) => sort_picker_key(app, key),
+        Mode::NoteSortPicker(_) => note_sort_picker_key(app, key),
+        Mode::NoteMovePicker(_) => note_move_picker_key(app, key),
         Mode::Settings => settings_key(app, key),
         Mode::Help => app.close_overlay(),
         Mode::Normal | Mode::Detail => nav_key(app, key),
@@ -64,6 +66,16 @@ fn move_picker_key(app: &mut App, key: KeyEvent) {
     }
 }
 
+fn note_move_picker_key(app: &mut App, key: KeyEvent) {
+    match key.code {
+        KeyCode::Char('j') | KeyCode::Down => app.note_move_picker_move(1),
+        KeyCode::Char('k') | KeyCode::Up => app.note_move_picker_move(-1),
+        KeyCode::Enter => app.note_move_picker_confirm(),
+        KeyCode::Esc | KeyCode::Char('q') => app.note_move_picker_cancel(),
+        _ => {}
+    }
+}
+
 fn copy_menu_key(app: &mut App, key: KeyEvent) {
     match key.code {
         KeyCode::Char('j') | KeyCode::Down => app.copy_menu_move(1),
@@ -89,14 +101,46 @@ fn sort_picker_key(app: &mut App, key: KeyEvent) {
     }
 }
 
+fn note_sort_picker_key(app: &mut App, key: KeyEvent) {
+    match key.code {
+        KeyCode::Char('j') | KeyCode::Down => app.note_sort_picker_move(1),
+        KeyCode::Char('k') | KeyCode::Up => app.note_sort_picker_move(-1),
+        KeyCode::Char(c @ '1'..='4') => app.note_sort_picker_select(c as usize - '1' as usize),
+        KeyCode::Char('r') | KeyCode::Left | KeyCode::Right => app.toggle_note_sort_dir(),
+        KeyCode::Enter => app.note_sort_picker_confirm(),
+        KeyCode::Esc | KeyCode::Char('q') => app.note_sort_picker_cancel(),
+        _ => {}
+    }
+}
+
 fn nav_key(app: &mut App, key: KeyEvent) {
     if let Some(action) = app.keymap.action_for(key) {
         dispatch(app, action);
     }
 }
 
-/// Run the (mode-aware) handler for a bound [`Action`] in Normal / Detail mode.
+/// Route a bound [`Action`] to the active tab's handler. Tab switching works
+/// from either tab regardless of focus or mode.
 fn dispatch(app: &mut App, action: Action) {
+    match action {
+        Action::SwitchToTasks => {
+            app.switch_tab(Tab::Tasks);
+            return;
+        }
+        Action::SwitchToNotes => {
+            app.switch_tab(Tab::Notes);
+            return;
+        }
+        _ => {}
+    }
+    match app.active_tab {
+        Tab::Tasks => dispatch_tasks(app, action),
+        Tab::Notes => dispatch_notes(app, action),
+    }
+}
+
+/// Run the (mode-aware) handler for a bound [`Action`] on the Tasks tab.
+fn dispatch_tasks(app: &mut App, action: Action) {
     let detail = matches!(app.mode, Mode::Detail);
     // Task-scoped actions must not reach into the tasks pane while the lists
     // pane is focused (outside a task's detail view). Otherwise e.g. Space would
@@ -146,7 +190,89 @@ fn dispatch(app: &mut App, action: Action) {
         Action::SortPicker => app.open_sort_picker(),
         Action::ThemePicker => app.open_theme_picker(),
         Action::Settings => app.open_settings(),
+        // Tab switching is handled by the router; note-only actions do nothing
+        // on the Tasks tab.
+        Action::SwitchToTasks
+        | Action::SwitchToNotes
+        | Action::TogglePin
+        | Action::ExternalEdit => {}
     }
+}
+
+/// Run the (mode-aware) handler for a bound [`Action`] on the Notes tab. The
+/// same keys as the Tasks tab drive the parallel notebook/note operations.
+fn dispatch_notes(app: &mut App, action: Action) {
+    let detail = matches!(app.mode, Mode::Detail);
+    // Note-scoped actions must not reach into the note list while the notebooks
+    // pane is focused (outside the full-screen note view).
+    if !detail && app.notes_focus == NotesFocus::Notebooks && is_note_action(action) {
+        return;
+    }
+    match action {
+        Action::Quit => app.should_quit = true,
+        Action::Help => app.mode = Mode::Help,
+        Action::ThemePicker => app.open_theme_picker(),
+        Action::Settings => app.open_settings(),
+        Action::Back => {
+            if detail {
+                app.close_overlay();
+            } else if app.note_filter_active() {
+                app.clear_note_filter();
+            }
+        }
+        Action::ToggleFocus => app.note_toggle_focus(),
+        Action::FocusLists if !detail => app.note_focus_notebooks(),
+        Action::FocusTasks if !detail => app.note_focus_notes(),
+        Action::FocusTags if !detail => app.note_focus_tags(),
+        Action::FocusLists | Action::FocusTasks | Action::FocusTags => {}
+        Action::MoveDown => app.note_move_selection(1),
+        Action::MoveUp => app.note_move_selection(-1),
+        Action::ReorderDown => app.reorder_note(1),
+        Action::ReorderUp => app.reorder_note(-1),
+        Action::SendTop => app.send_note(true),
+        Action::SendBottom => app.send_note(false),
+        Action::Activate => app.note_activate(),
+        Action::AddTask => app.start_add_note(),
+        Action::AddList => app.start_add_notebook(),
+        Action::Edit => app.start_edit_note(),
+        Action::SetNotes => app.start_edit_note_body(),
+        Action::SetTags => app.start_set_note_tags(),
+        Action::TogglePin => app.toggle_current_note_pin(),
+        Action::ExternalEdit => app.open_note_in_editor(),
+        Action::Archive => app.note_archive_selection(),
+        Action::MoveTask => app.start_move_note(),
+        Action::Delete => app.start_delete_note(),
+        Action::Search => app.start_note_search(),
+        Action::SortPicker => app.open_note_sort_picker(),
+        // Task-only actions have no meaning on the Notes tab.
+        Action::ToggleDone
+        | Action::CyclePriority
+        | Action::SetPoints
+        | Action::SetDue
+        | Action::AddSubtask
+        | Action::Copy
+        | Action::CycleFilter => {}
+        // Handled by the tab router before reaching here.
+        Action::SwitchToTasks | Action::SwitchToNotes => {}
+    }
+}
+
+/// Notes-tab actions that operate on the selected note and so are inert while
+/// the notebooks pane is focused. Pane-agnostic ones (navigation, add, rename,
+/// delete, search, sort) are deliberately absent.
+fn is_note_action(action: Action) -> bool {
+    matches!(
+        action,
+        Action::TogglePin
+            | Action::ExternalEdit
+            | Action::SetNotes
+            | Action::SetTags
+            | Action::MoveTask
+            | Action::ReorderDown
+            | Action::ReorderUp
+            | Action::SendTop
+            | Action::SendBottom
+    )
 }
 
 /// Actions that operate on the selected task and so are inert while the lists
@@ -183,6 +309,9 @@ fn input_key(app: &mut App, key: KeyEvent) {
 
     if let Mode::Input(input) = &mut app.mode {
         match key.code {
+            // The full-screen note editor autosaves on Esc; every other field
+            // treats Esc as cancel/discard.
+            KeyCode::Esc if input.field == InputField::NoteBody => step = Step::Commit,
             KeyCode::Esc => step = Step::Cancel,
             KeyCode::Enter if input.multiline => input.insert('\n'),
             KeyCode::Enter => step = Step::Commit,
@@ -240,6 +369,13 @@ fn apply_input(app: &mut App, field: InputField, buffer: String) {
         InputField::EditSubtask => app.edit_current_subtask(buffer),
         InputField::Search => app.set_search(buffer),
         InputField::DataDir => app.relocate_data(&buffer),
+        InputField::NewNotebook => app.add_notebook(buffer),
+        InputField::RenameNotebook => app.rename_current_notebook(buffer),
+        InputField::NewNote => app.add_note(buffer),
+        InputField::EditNote => app.edit_current_note_title(buffer),
+        InputField::NoteBody => app.set_current_note_body(buffer),
+        InputField::NoteTags => app.set_current_note_tags(&buffer),
+        InputField::NoteSearch => app.set_note_search(buffer),
     }
 }
 
@@ -274,6 +410,11 @@ fn confirm_key(app: &mut App, key: KeyEvent) {
         }
         ConfirmAction::DeleteList => app.delete_current_list(),
         ConfirmAction::DeleteSubtask => app.delete_current_subtask(),
+        ConfirmAction::DeleteNote => {
+            app.delete_current_note();
+            app.mode = Mode::Normal;
+        }
+        ConfirmAction::DeleteNotebook => app.delete_current_notebook(),
     }
 }
 
@@ -335,37 +476,84 @@ pub fn handle_mouse(app: &mut App, m: MouseEvent) {
     match m.kind {
         MouseEventKind::Down(MouseButton::Left) => {
             let (col, row) = (m.column, m.row);
-            if let Some((rect, offset)) = app.clickables.lists_inner
-                && hit(rect, col, row)
-            {
-                // Lists occupy the first rows of the flat sidebar order, so the
-                // clicked row *is* the flat index.
-                let idx = offset + (row - rect.y) as usize;
-                app.select_sidebar_row(idx);
+            // A click on a header tab chip switches tabs, from either tab.
+            let clicked_tab = app
+                .clickables
+                .tab_rects
+                .iter()
+                .find(|(_, r)| hit(*r, col, row))
+                .map(|(t, _)| *t);
+            if let Some(tab) = clicked_tab {
+                app.switch_tab(tab);
                 return;
             }
-            if let Some((rect, offset)) = app.clickables.tags_inner
-                && hit(rect, col, row)
-            {
-                // Tag rows follow the lists in the flat order.
-                let local = offset + (row - rect.y) as usize;
-                app.select_sidebar_row(app.lists.len() + local);
-                return;
-            }
-            if let Some((rect, offset)) = app.clickables.tasks_inner
-                && hit(rect, col, row)
-            {
-                let vidx = offset + (row - rect.y) as usize;
-                app.select_task_visible(vidx);
-                // Clicking the leading checkbox toggles done.
-                if col <= rect.x + 2 {
-                    app.toggle_current_done();
-                }
+            match app.active_tab {
+                Tab::Tasks => task_click(app, col, row),
+                Tab::Notes => note_click(app, col, row),
             }
         }
-        MouseEventKind::ScrollDown => app.move_selection(1),
-        MouseEventKind::ScrollUp => app.move_selection(-1),
+        MouseEventKind::ScrollDown => match app.active_tab {
+            Tab::Tasks => app.move_selection(1),
+            Tab::Notes => app.note_move_selection(1),
+        },
+        MouseEventKind::ScrollUp => match app.active_tab {
+            Tab::Tasks => app.move_selection(-1),
+            Tab::Notes => app.note_move_selection(-1),
+        },
         _ => {}
+    }
+}
+
+fn task_click(app: &mut App, col: u16, row: u16) {
+    if let Some((rect, offset)) = app.clickables.lists_inner
+        && hit(rect, col, row)
+    {
+        // Lists occupy the first rows of the flat sidebar order, so the
+        // clicked row *is* the flat index.
+        let idx = offset + (row - rect.y) as usize;
+        app.select_sidebar_row(idx);
+        return;
+    }
+    if let Some((rect, offset)) = app.clickables.tags_inner
+        && hit(rect, col, row)
+    {
+        // Tag rows follow the lists in the flat order.
+        let local = offset + (row - rect.y) as usize;
+        app.select_sidebar_row(app.lists.len() + local);
+        return;
+    }
+    if let Some((rect, offset)) = app.clickables.tasks_inner
+        && hit(rect, col, row)
+    {
+        let vidx = offset + (row - rect.y) as usize;
+        app.select_task_visible(vidx);
+        // Clicking the leading checkbox toggles done.
+        if col <= rect.x + 2 {
+            app.toggle_current_done();
+        }
+    }
+}
+
+fn note_click(app: &mut App, col: u16, row: u16) {
+    if let Some((rect, offset)) = app.clickables.notebooks_inner
+        && hit(rect, col, row)
+    {
+        let idx = offset + (row - rect.y) as usize;
+        app.select_note_sidebar_row(idx);
+        return;
+    }
+    if let Some((rect, offset)) = app.clickables.note_tags_inner
+        && hit(rect, col, row)
+    {
+        let local = offset + (row - rect.y) as usize;
+        app.select_note_sidebar_row(app.notebooks.len() + local);
+        return;
+    }
+    if let Some((rect, offset)) = app.clickables.note_list_inner
+        && hit(rect, col, row)
+    {
+        let vidx = offset + (row - rect.y) as usize;
+        app.select_note_visible(vidx);
     }
 }
 

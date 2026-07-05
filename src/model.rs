@@ -483,6 +483,320 @@ fn find_phrase_marker(s: &str, from: usize) -> Option<usize> {
     None
 }
 
+// --- notes ------------------------------------------------------------------
+
+/// A single markdown note. Stored on disk as one `.md` file with a small YAML
+/// frontmatter block carrying its metadata; everything after the frontmatter is
+/// the plain-markdown body. `slug` is the file stem and is not part of the
+/// frontmatter (it comes from the filename on load), and `modified` is taken
+/// from the filesystem so it stays correct even when the file is edited by
+/// another tool.
+#[derive(Debug, Clone)]
+pub struct Note {
+    /// Display title (the `title:` field, falling back to the first heading or
+    /// the de-slugged filename).
+    pub title: String,
+    /// Markdown body (everything after the frontmatter).
+    pub body: String,
+    pub tags: Vec<String>,
+    /// Pinned notes float to the top of their notebook regardless of the sort.
+    pub pinned: bool,
+    /// Manual position within the notebook. `None` sorts after ordered notes.
+    pub order: Option<u32>,
+    pub created: DateTime<Utc>,
+    /// Last-modified time, taken from the filesystem on load.
+    pub modified: DateTime<Utc>,
+    /// File stem (no `.md`). Not serialized — set from the filename on load.
+    pub slug: String,
+}
+
+impl Note {
+    pub fn new(title: impl Into<String>) -> Self {
+        let now = Utc::now();
+        Self {
+            title: title.into(),
+            body: String::new(),
+            tags: Vec::new(),
+            pinned: false,
+            order: None,
+            created: now,
+            modified: now,
+            slug: String::new(),
+        }
+    }
+
+    /// Word count of the body, for the note-list metadata column.
+    pub fn word_count(&self) -> usize {
+        self.body.split_whitespace().count()
+    }
+
+    /// Substring match across title, body and tags (case-insensitive).
+    pub fn matches_query(&self, query: &str) -> bool {
+        if query.is_empty() {
+            return true;
+        }
+        let q = query.to_lowercase();
+        self.title.to_lowercase().contains(&q)
+            || self.body.to_lowercase().contains(&q)
+            || self.tags.iter().any(|t| t.to_lowercase().contains(&q))
+    }
+
+    /// Serialize to the on-disk `.md` form: frontmatter block then body. `slug`
+    /// and `modified` are intentionally left out (they live in the filename and
+    /// the filesystem, respectively).
+    pub fn to_file_string(&self) -> String {
+        let mut out = String::from("---\n");
+        out.push_str(&format!("title: {}\n", self.title));
+        if !self.tags.is_empty() {
+            out.push_str(&format!("tags: [{}]\n", self.tags.join(", ")));
+        }
+        if self.pinned {
+            out.push_str("pinned: true\n");
+        }
+        if let Some(order) = self.order {
+            out.push_str(&format!("order: {order}\n"));
+        }
+        out.push_str(&format!("created: {}\n", self.created.to_rfc3339()));
+        out.push_str("---\n");
+        // Body goes directly after the closing fence so it round-trips exactly
+        // (a blank separator line would come back as a leading newline).
+        if !self.body.is_empty() {
+            out.push_str(&self.body);
+            if !self.body.ends_with('\n') {
+                out.push('\n');
+            }
+        }
+        out
+    }
+
+    /// Parse a note from a file's `contents`, its `slug` (file stem) and its
+    /// filesystem `modified` time. Lenient: unknown frontmatter keys are ignored,
+    /// a missing/broken frontmatter block treats the whole file as body, and a
+    /// missing title falls back to the first heading or the de-slugged filename.
+    pub fn from_file(contents: &str, slug: String, modified: DateTime<Utc>) -> Note {
+        let mut note = Note {
+            title: String::new(),
+            body: String::new(),
+            tags: Vec::new(),
+            pinned: false,
+            order: None,
+            created: modified,
+            modified,
+            slug: slug.clone(),
+        };
+        match split_frontmatter(contents) {
+            Some((fm, body)) => {
+                for line in fm.lines() {
+                    let Some((key, value)) = line.split_once(':') else {
+                        continue;
+                    };
+                    let value = value.trim();
+                    match key.trim() {
+                        "title" => note.title = unquote(value).to_string(),
+                        "tags" => {
+                            let inner = value.trim_start_matches('[').trim_end_matches(']');
+                            note.tags = parse_tags(inner);
+                        }
+                        "pinned" => note.pinned = value == "true",
+                        "order" => note.order = value.parse().ok(),
+                        "created" => {
+                            if let Ok(dt) = DateTime::parse_from_rfc3339(value) {
+                                note.created = dt.with_timezone(&Utc);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                note.body = body;
+            }
+            None => note.body = contents.to_string(),
+        }
+        if note.title.trim().is_empty() {
+            note.title = title_from_body_or_slug(&note.body, &slug);
+        }
+        note
+    }
+}
+
+/// Split leading YAML frontmatter (delimited by `---` lines) from the body.
+/// Returns `(frontmatter, body)` with line endings normalized to `\n`, or
+/// `None` when the content doesn't open with a `---` fence that later closes.
+fn split_frontmatter(contents: &str) -> Option<(String, String)> {
+    let contents = contents.strip_prefix('\u{feff}').unwrap_or(contents);
+    let mut lines = contents.lines();
+    if lines.next()?.trim_end() != "---" {
+        return None;
+    }
+    let mut fm = String::new();
+    let mut body = String::new();
+    let mut in_body = false;
+    for line in lines {
+        if !in_body && line.trim_end() == "---" {
+            in_body = true;
+            continue;
+        }
+        if in_body {
+            body.push_str(line);
+            body.push('\n');
+        } else {
+            fm.push_str(line);
+            fm.push('\n');
+        }
+    }
+    // No closing fence: not real frontmatter — let the caller keep it as body.
+    if !in_body {
+        return None;
+    }
+    if body.ends_with('\n') {
+        body.pop();
+    }
+    Some((fm, body))
+}
+
+/// Strip a single pair of matching surrounding quotes, if present.
+fn unquote(s: &str) -> &str {
+    let s = s.trim();
+    let bytes = s.as_bytes();
+    if bytes.len() >= 2
+        && ((bytes[0] == b'"' && bytes[bytes.len() - 1] == b'"')
+            || (bytes[0] == b'\'' && bytes[bytes.len() - 1] == b'\''))
+    {
+        &s[1..s.len() - 1]
+    } else {
+        s
+    }
+}
+
+/// Derive a title when the frontmatter has none: the first non-empty body line
+/// (with any leading `#` markers stripped), else the filename with dashes turned
+/// back into spaces.
+fn title_from_body_or_slug(body: &str, slug: &str) -> String {
+    if let Some(first) = body.lines().find(|l| !l.trim().is_empty()) {
+        let heading = first.trim().trim_start_matches('#').trim();
+        if !heading.is_empty() {
+            return heading.to_string();
+        }
+    }
+    if slug.is_empty() {
+        "Untitled".to_string()
+    } else {
+        slug.replace('-', " ")
+    }
+}
+
+/// Reserved folder name for the special "Archived" notebook. Its display name is
+/// [`ARCHIVE_NOTEBOOK_NAME`]; the underscore-wrapped folder keeps it visually
+/// distinct on disk and lets [`Notebook::is_archive`] identify it.
+pub const ARCHIVE_NOTEBOOK_SLUG: &str = "__archived__";
+
+/// Display name for the Archived notebook.
+pub const ARCHIVE_NOTEBOOK_NAME: &str = "Archived";
+
+/// A named notebook: a folder of notes. Unlike a task [`List`], a notebook has no
+/// metadata file of its own — its `slug` is the folder name and doubles as the
+/// display `name`, so the `.md` files inside stay the only things on disk.
+#[derive(Debug, Clone, Default)]
+pub struct Notebook {
+    pub name: String,
+    pub notes: Vec<Note>,
+    /// Folder name on disk. Set from the directory name on load.
+    pub slug: String,
+}
+
+impl Notebook {
+    pub fn new(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            notes: Vec::new(),
+            slug: String::new(),
+        }
+    }
+
+    /// True for the reserved Archived notebook (identified by its folder name).
+    pub fn is_archive(&self) -> bool {
+        self.slug == ARCHIVE_NOTEBOOK_SLUG
+    }
+}
+
+/// Parse a new-note title, pulling `#tag` tokens out of it the way the task
+/// quick-add does. Returns the cleaned title and the (deduped, normalized) tags.
+/// Only `#tag` is recognised — notes have no priority/points/due/subtask markers,
+/// so a title like "Meeting @ 3pm" keeps its punctuation.
+pub fn parse_note_title(input: &str) -> (String, Vec<String>) {
+    let mut title_words: Vec<&str> = Vec::new();
+    let mut tag_tokens: Vec<&str> = Vec::new();
+    for tok in input.split_whitespace() {
+        if tok.starts_with('#') {
+            tag_tokens.push(tok);
+        } else {
+            title_words.push(tok);
+        }
+    }
+    let tags = if tag_tokens.is_empty() {
+        Vec::new()
+    } else {
+        parse_tags(&tag_tokens.join(" "))
+    };
+    (title_words.join(" "), tags)
+}
+
+/// How the visible notes are ordered. Session-only like [`Sort`], defaulting to
+/// `Manual` (the stored order set by the reorder keys). Pinned notes float to
+/// the top regardless of the active sort.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum NoteSort {
+    /// The user's manual order (reordering keys stay enabled).
+    #[default]
+    Manual,
+    /// Alphabetical by title (case-insensitive).
+    Alphabetical,
+    /// Most recently created first.
+    Created,
+    /// Most recently modified first.
+    Modified,
+}
+
+impl NoteSort {
+    /// All sorts, in the order they appear in the picker.
+    pub fn all() -> [NoteSort; 4] {
+        [
+            NoteSort::Manual,
+            NoteSort::Alphabetical,
+            NoteSort::Created,
+            NoteSort::Modified,
+        ]
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            NoteSort::Manual => "manual",
+            NoteSort::Alphabetical => "A–Z",
+            NoteSort::Created => "created",
+            NoteSort::Modified => "modified",
+        }
+    }
+
+    pub fn description(self) -> &'static str {
+        match self {
+            NoteSort::Manual => "your own order · reordering enabled",
+            NoteSort::Alphabetical => "by title, A to Z",
+            NoteSort::Created => "newest first",
+            NoteSort::Modified => "most recently edited first",
+        }
+    }
+
+    /// Order two notes for this sort in its ascending form. `Manual` reports
+    /// every pair equal so a stable sort leaves the stored order untouched.
+    pub fn compare(self, a: &Note, b: &Note) -> Ordering {
+        match self {
+            NoteSort::Manual => Ordering::Equal,
+            NoteSort::Alphabetical => a.title.to_lowercase().cmp(&b.title.to_lowercase()),
+            NoteSort::Created => b.created.cmp(&a.created),
+            NoteSort::Modified => b.modified.cmp(&a.modified),
+        }
+    }
+}
+
 /// A classified slice of a quick-add input string, for live syntax highlighting.
 /// See [`quick_add_spans`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
