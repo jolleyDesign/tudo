@@ -130,6 +130,15 @@ enum EntryKey {
     Tag(String),
 }
 
+/// Step `cur` by `delta` within the inclusive range `[lo, hi]`, wrapping around
+/// at either end (round-robin) so moving off the bottom lands on the top and
+/// vice versa. Assumes `lo <= hi` and `cur` already within the range.
+fn wrap_index(cur: usize, delta: isize, lo: usize, hi: usize) -> usize {
+    let span = (hi - lo + 1) as isize;
+    let rel = (cur as isize - lo as isize + delta).rem_euclid(span);
+    (lo as isize + rel) as usize
+}
+
 /// Which text field an [`InputState`] is collecting.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InputField {
@@ -1230,22 +1239,44 @@ impl App {
             Mode::Detail => self.move_subtask(delta),
             _ => match self.focus {
                 Focus::Lists => self.move_list(delta),
-                Focus::Tasks => self.move_task(delta),
+                Focus::Tasks => self.move_task(delta, true),
             },
         }
     }
 
     fn move_list(&mut self, delta: isize) {
-        // One flat cursor runs through the lists then the tags, so `j`/`k` flow
-        // straight from the last list into the tag pane.
-        let len = self.sidebar_rows().len();
-        if len == 0 {
+        // `j`/`k` round-robin *within* the current pane (the lists, or the tags),
+        // wrapping top-to-bottom rather than spilling into the neighbouring pane.
+        // Crossing between the two panes is `toggle_sidebar_pane`'s job.
+        let total = self.sidebar_rows().len();
+        if total == 0 {
             return;
         }
-        let cur = self.list_state.selected().unwrap_or(0) as isize;
-        let next = (cur + delta).clamp(0, len as isize - 1) as usize;
+        let lists = self.lists.len();
+        let cur = self.list_state.selected().unwrap_or(0);
+        let (lo, hi) = if cur < lists {
+            (0, lists.saturating_sub(1))
+        } else {
+            (lists, total - 1)
+        };
+        let next = wrap_index(cur, delta, lo, hi);
         self.list_state.select(Some(next));
         self.task_state.select(Some(0));
+    }
+
+    /// Flip the sidebar cursor between the Lists pane and the Tags pane in one
+    /// keystroke, so a long list of lists never stands between you and the tags.
+    /// From the tasks pane it first steps back into the sidebar; a second press
+    /// then flips panes. Crossing into the tags is a no-op when none exist.
+    pub fn toggle_sidebar_pane(&mut self) {
+        if self.focus == Focus::Tasks {
+            self.focus = Focus::Lists;
+            return;
+        }
+        match self.selected_row() {
+            Some(SidebarRow::Tag(_)) => self.focus_lists(),
+            _ => self.focus_tags(),
+        }
     }
 
     /// Scroll-wheel movement, which (unlike `j`/`k`) stays within the section
@@ -1256,7 +1287,7 @@ impl App {
             Mode::Detail => self.move_subtask(delta),
             _ => match self.focus {
                 Focus::Lists => self.scroll_list(delta),
-                Focus::Tasks => self.move_task(delta),
+                Focus::Tasks => self.move_task(delta, false),
             },
         }
     }
@@ -1280,14 +1311,21 @@ impl App {
         self.task_state.select(Some(0));
     }
 
-    fn move_task(&mut self, delta: isize) {
+    /// Move within the visible task list. `j`/`k` round-robin (`wrap`), so past
+    /// the last task lands on the first and vice versa; the wheel clamps at the
+    /// ends instead (matching the sidebar).
+    fn move_task(&mut self, delta: isize, wrap: bool) {
         let len = self.visible_task_indices().len();
         if len == 0 {
             self.task_state.select(None);
             return;
         }
-        let cur = self.selected_visible_task() as isize;
-        let next = (cur + delta).clamp(0, len as isize - 1) as usize;
+        let cur = self.selected_visible_task();
+        let next = if wrap {
+            wrap_index(cur, delta, 0, len - 1)
+        } else {
+            (cur as isize + delta).clamp(0, len as isize - 1) as usize
+        };
         self.task_state.select(Some(next));
     }
 
@@ -2704,25 +2742,47 @@ impl App {
         }
         match self.notes_focus {
             NotesFocus::Notebooks => {
-                let len = self.note_sidebar_rows().len();
-                if len == 0 {
+                // Round-robin within the current pane (notebooks, or note tags),
+                // mirroring the Tasks-tab sidebar (see `App::move_list`).
+                let total = self.note_sidebar_rows().len();
+                if total == 0 {
                     return;
                 }
-                let cur = self.notebook_state.selected().unwrap_or(0) as isize;
-                let next = (cur + delta).clamp(0, len as isize - 1) as usize;
+                let notebooks = self.notebooks.len();
+                let cur = self.notebook_state.selected().unwrap_or(0);
+                let (lo, hi) = if cur < notebooks {
+                    (0, notebooks.saturating_sub(1))
+                } else {
+                    (notebooks, total - 1)
+                };
+                let next = wrap_index(cur, delta, lo, hi);
                 self.notebook_state.select(Some(next));
                 self.note_state.select(Some(0));
             }
             NotesFocus::Notes => {
+                // Round-robin the note list, mirroring the Tasks tab.
                 let len = self.visible_note_refs().len();
                 if len == 0 {
                     self.note_state.select(None);
                     return;
                 }
-                let cur = self.selected_visible_note() as isize;
-                let next = (cur + delta).clamp(0, len as isize - 1) as usize;
+                let cur = self.selected_visible_note();
+                let next = wrap_index(cur, delta, 0, len - 1);
                 self.note_state.select(Some(next));
             }
+        }
+    }
+
+    /// Flip the Notes sidebar between the Notebooks pane and the note-tags pane,
+    /// parallel to [`App::toggle_sidebar_pane`] on the Tasks tab.
+    pub fn note_toggle_sidebar_pane(&mut self) {
+        if self.notes_focus == NotesFocus::Notes {
+            self.notes_focus = NotesFocus::Notebooks;
+            return;
+        }
+        match self.selected_note_row() {
+            Some(NoteSidebarRow::Tag(_)) => self.note_focus_notebooks(),
+            _ => self.note_focus_tags(),
         }
     }
 

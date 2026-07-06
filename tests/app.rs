@@ -1371,21 +1371,117 @@ fn clearing_the_last_use_of_a_tag_drops_it_and_reselects_safely() {
 }
 
 #[test]
-fn sidebar_navigation_flows_from_lists_into_tags() {
+fn sidebar_jk_round_robins_within_each_pane() {
     let dir = tempfile::tempdir().unwrap();
     let mut app = app_in(dir.path());
     app.add_list("Alpha".to_string());
     app.add_list("Beta".to_string());
     app.select_list_index(0);
     app.add_task("a #x".to_string());
+    app.select_list_index(1);
+    app.add_task("b #y".to_string());
+    assert_eq!(app.all_tags().len(), 2);
 
-    // The single cursor runs off the last list straight onto the first tag.
+    // `j` off the last list wraps back to the first list rather than spilling
+    // into the tag pane; `k` off the first list wraps to the last.
     app.select_list_index(1);
     app.move_selection(1);
-    assert_eq!(app.current_view(), Some(View::Tag("x".to_string())));
-    // ...and back up onto the list.
+    assert_eq!(app.selected_list_index(), Some(0));
     app.move_selection(-1);
     assert_eq!(app.selected_list_index(), Some(1));
+
+    // The tags pane round-robins on its own, too.
+    let tags = app.all_tags();
+    let (first, last) = (tags[0].clone(), tags[tags.len() - 1].clone());
+    app.select_sidebar_row(tag_row(&app, &last));
+    app.move_selection(1);
+    assert_eq!(app.current_view(), Some(View::Tag(first.clone())));
+    app.move_selection(-1);
+    assert_eq!(app.current_view(), Some(View::Tag(last)));
+}
+
+#[test]
+fn toggle_sidebar_pane_flips_between_lists_and_tags() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app_in(dir.path());
+    app.add_list("Alpha".to_string());
+    app.add_list("Beta".to_string());
+    app.select_list_index(1);
+    app.add_task("a #x".to_string());
+
+    // From a list the toggle jumps straight to the tags, no matter how many
+    // lists sit in between. Drive it through the real key path (`\`) so the
+    // keymap lookup and dispatch are exercised, not just the method.
+    app.select_list_index(1);
+    event::handle_key(&mut app, KeyEvent::from(KeyCode::Char('\\')));
+    assert_eq!(app.current_view(), Some(View::Tag("x".to_string())));
+    // ...and back onto the list you were on.
+    event::handle_key(&mut app, KeyEvent::from(KeyCode::Char('\\')));
+    assert_eq!(app.selected_list_index(), Some(1));
+
+    // From the tasks pane it first steps back into the sidebar.
+    app.focus_tasks();
+    assert_eq!(app.focus, Focus::Tasks);
+    app.toggle_sidebar_pane();
+    assert_eq!(app.focus, Focus::Lists);
+
+    // With no tags at all, crossing into the (absent) tag pane is a no-op.
+    app.set_current_tags("");
+    assert!(app.all_tags().is_empty());
+    app.toggle_sidebar_pane();
+    assert_eq!(app.selected_list_index(), Some(1));
+}
+
+#[test]
+fn task_list_jk_round_robins_but_wheel_clamps() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app_in(dir.path());
+    app.add_list("L".to_string());
+    app.add_task("one".to_string());
+    app.add_task("two".to_string());
+    app.add_task("three".to_string());
+
+    // `k` off the first task wraps to the last; `j` off the last wraps to the
+    // first.
+    app.select_task_visible(0);
+    app.move_selection(-1);
+    assert_eq!(app.selected_visible_task(), 2);
+    app.move_selection(1);
+    assert_eq!(app.selected_visible_task(), 0);
+
+    // The wheel clamps at the ends instead of wrapping.
+    app.select_task_visible(2);
+    app.scroll_selection(1);
+    assert_eq!(app.selected_visible_task(), 2);
+    app.select_task_visible(0);
+    app.scroll_selection(-1);
+    assert_eq!(app.selected_visible_task(), 0);
+}
+
+#[test]
+fn note_list_jk_round_robins_but_wheel_clamps() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app_in(dir.path());
+    app.add_notebook("N".to_string());
+    app.add_note("one".to_string());
+    app.add_note("two".to_string());
+    app.add_note("three".to_string());
+    app.note_focus_notes();
+
+    // `k` off the first note wraps to the last; `j` off the last wraps back.
+    app.select_note_visible(0);
+    app.note_move_selection(-1);
+    assert_eq!(app.selected_visible_note(), 2);
+    app.note_move_selection(1);
+    assert_eq!(app.selected_visible_note(), 0);
+
+    // The wheel clamps at the ends.
+    app.select_note_visible(2);
+    app.note_scroll_selection(1);
+    assert_eq!(app.selected_visible_note(), 2);
+    app.select_note_visible(0);
+    app.note_scroll_selection(-1);
+    assert_eq!(app.selected_visible_note(), 0);
 }
 
 #[test]

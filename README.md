@@ -114,9 +114,10 @@ note operations (see [Notes](#notes)).
 | Key | Action |
 |-----|--------|
 | `1` / `2` | switch to the Tasks / Notes tab (works from either tab) |
-| `Tab` / `Shift`+`Tab` | cycle focus through Lists → Tags → Tasks (and back) |
+| `Tab` / `Shift`+`Tab` | toggle focus between the sidebar and the Tasks pane |
 | `h`/`l`, `←`/`→` | jump between the sidebar and the Tasks pane |
-| `j`/`k`, `↑`/`↓` | move the selection (flows from the lists into the tags) |
+| `\` | flip the sidebar between the Lists and Tags panes (`#` jumps straight to Tags) — no scrolling past every list |
+| `j`/`k`, `↑`/`↓` | move the selection within the focused pane (wraps around: past the bottom lands on the top, and vice versa) |
 | `Enter` | open a task's detail view / drill into a list |
 | `Esc` | close a dialog / leave detail / clear the filter |
 
@@ -285,6 +286,7 @@ tudo writes a full `keybindings` block into your `config.json` (on first run, an
 | Action | Default | Does |
 |--------|---------|------|
 | `toggle-focus` | `tab` / `backtab` | toggle focus between the sidebar and the Tasks pane |
+| `toggle-sidebar-pane` | `\` | flip the sidebar between the Lists and Tags panes |
 | `focus-lists` / `focus-tasks` / `focus-tags` | `h`/`left`, `l`/`right`, `#` | jump to the lists / the Tasks pane / the tags |
 | `move-down` / `move-up` | `j`/`down`, `k`/`up` | move the selection |
 | `activate` | `enter` | open a task's detail / drill into a list |

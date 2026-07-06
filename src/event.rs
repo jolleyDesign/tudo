@@ -212,10 +212,12 @@ fn dispatch_tasks(app: &mut App, action: Action) {
         }
         Action::ToggleFocus => app.toggle_focus(),
         // Pane focus is meaningless inside a task's detail view.
+        Action::ToggleSidebarPane if !detail => app.toggle_sidebar_pane(),
         Action::FocusLists if !detail => app.focus_lists(),
         Action::FocusTasks if !detail => app.focus_tasks(),
         Action::FocusTags if !detail => app.focus_tags(),
-        Action::FocusLists | Action::FocusTasks | Action::FocusTags => {}
+        Action::ToggleSidebarPane | Action::FocusLists | Action::FocusTasks | Action::FocusTags => {
+        }
         Action::MoveDown => app.move_selection(1),
         Action::MoveUp => app.move_selection(-1),
         Action::ReorderDown => app.reorder_selection(1),
@@ -273,10 +275,12 @@ fn dispatch_notes(app: &mut App, action: Action) {
             }
         }
         Action::ToggleFocus => app.note_toggle_focus(),
+        Action::ToggleSidebarPane if !detail => app.note_toggle_sidebar_pane(),
         Action::FocusLists if !detail => app.note_focus_notebooks(),
         Action::FocusTasks if !detail => app.note_focus_notes(),
         Action::FocusTags if !detail => app.note_focus_tags(),
-        Action::FocusLists | Action::FocusTasks | Action::FocusTags => {}
+        Action::ToggleSidebarPane | Action::FocusLists | Action::FocusTasks | Action::FocusTags => {
+        }
         Action::MoveDown => app.note_move_selection(1),
         Action::MoveUp => app.note_move_selection(-1),
         Action::ReorderDown => app.note_reorder_selection(1),

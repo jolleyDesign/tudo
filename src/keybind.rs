@@ -32,6 +32,7 @@ pub type Overrides = BTreeMap<String, Vec<String>>;
 pub enum Action {
     // Navigate
     ToggleFocus,
+    ToggleSidebarPane,
     FocusLists,
     FocusTasks,
     FocusTags,
@@ -77,8 +78,9 @@ pub enum Action {
 
 impl Action {
     /// All actions, in canonical order.
-    pub const ALL: [Action; 37] = [
+    pub const ALL: [Action; 38] = [
         Action::ToggleFocus,
+        Action::ToggleSidebarPane,
         Action::FocusLists,
         Action::FocusTasks,
         Action::FocusTags,
@@ -121,6 +123,7 @@ impl Action {
     pub fn config_name(self) -> &'static str {
         match self {
             Action::ToggleFocus => "toggle-focus",
+            Action::ToggleSidebarPane => "toggle-sidebar-pane",
             Action::FocusLists => "focus-lists",
             Action::FocusTasks => "focus-tasks",
             Action::FocusTags => "focus-tags",
@@ -179,6 +182,9 @@ impl Action {
                 c(KeyCode::BackTab),
                 KeyChord::new(KeyCode::Tab, KeyModifiers::SHIFT),
             ],
+            // Flip between the two sidebar panes (lists ⇄ tags) without walking
+            // the cursor through every list in between.
+            Action::ToggleSidebarPane => vec![c(KeyCode::Char('\\'))],
             Action::FocusLists => vec![c(KeyCode::Char('h')), c(KeyCode::Left)],
             Action::FocusTasks => vec![c(KeyCode::Char('l')), c(KeyCode::Right)],
             Action::FocusTags => vec![c(KeyCode::Char('#'))],

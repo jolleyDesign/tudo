@@ -1979,6 +1979,11 @@ fn render_help(f: &mut Frame, app: &App) {
                 header("Navigate"),
                 row(&keys_for(app, &[Action::ToggleFocus]), "toggle panes", LW),
                 row(
+                    &keys_for(app, &[Action::ToggleSidebarPane]),
+                    "lists \u{21c4} tags",
+                    LW,
+                ),
+                row(
                     &keys_for(
                         app,
                         &[Action::FocusLists, Action::FocusTasks, Action::FocusTags],
@@ -2050,6 +2055,11 @@ fn render_help(f: &mut Frame, app: &App) {
             vec![
                 header("Navigate"),
                 row(&keys_for(app, &[Action::ToggleFocus]), "toggle panes", LW),
+                row(
+                    &keys_for(app, &[Action::ToggleSidebarPane]),
+                    "notebooks \u{21c4} tags",
+                    LW,
+                ),
                 row(
                     &keys_for(
                         app,
