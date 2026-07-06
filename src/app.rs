@@ -340,8 +340,12 @@ pub struct ThemePickerState {
 pub struct MovePickerState {
     /// Indices into [`App::lists`] that are valid targets (every list but the source).
     pub targets: Vec<usize>,
-    /// Cursor into `targets`.
+    /// Type-to-filter query (case-insensitive substring match on list name).
+    pub filter: String,
+    /// Cursor into the *filtered* target list.
     pub selected: usize,
+    /// First visible filtered row (vertical scroll offset).
+    pub scroll: u16,
     /// Return to Detail mode (vs Normal) on cancel.
     pub return_detail: bool,
 }
@@ -1817,19 +1821,58 @@ impl App {
         }
         self.mode = Mode::MovePicker(MovePickerState {
             targets,
+            filter: String::new(),
             selected: 0,
+            scroll: 0,
             return_detail: self.in_detail(),
         });
     }
 
-    /// Move the picker highlight (wraps).
+    /// Target list indices matching the current filter, in target order. Returns
+    /// all targets when the filter is empty; empty vec when not in the picker.
+    pub fn move_picker_filtered(&self) -> Vec<usize> {
+        let Mode::MovePicker(state) = &self.mode else {
+            return Vec::new();
+        };
+        let q = state.filter.trim().to_lowercase();
+        if q.is_empty() {
+            return state.targets.clone();
+        }
+        state
+            .targets
+            .iter()
+            .copied()
+            .filter(|&i| self.lists[i].name.to_lowercase().contains(&q))
+            .collect()
+    }
+
+    /// Move the picker highlight over the filtered set (wraps).
     pub fn move_picker_move(&mut self, delta: isize) {
+        let n = self.move_picker_filtered().len() as isize;
         if let Mode::MovePicker(state) = &mut self.mode {
-            let n = state.targets.len() as isize;
             if n == 0 {
+                state.selected = 0;
                 return;
             }
             state.selected = ((((state.selected as isize + delta) % n) + n) % n) as usize;
+        }
+    }
+
+    /// Append a character to the filter, resetting the cursor to the top match.
+    pub fn move_picker_type(&mut self, c: char) {
+        if let Mode::MovePicker(state) = &mut self.mode {
+            state.filter.push(c);
+            state.selected = 0;
+            state.scroll = 0;
+        }
+    }
+
+    /// Delete the last filter character, resetting the cursor to the top match.
+    pub fn move_picker_backspace(&mut self) {
+        if let Mode::MovePicker(state) = &mut self.mode {
+            state.filter.pop();
+            state.selected = 0;
+            state.scroll = 0;
         }
     }
 
@@ -1837,8 +1880,9 @@ impl App {
     /// highlighted one, persisting both. The task leaves this list, so we always
     /// return to Normal (its detail view no longer applies here).
     pub fn move_picker_confirm(&mut self) {
+        let filtered = self.move_picker_filtered();
         let target = match &self.mode {
-            Mode::MovePicker(state) => state.targets.get(state.selected).copied(),
+            Mode::MovePicker(state) => filtered.get(state.selected).copied(),
             _ => return,
         };
         let key = self.selected_entry_key();
@@ -3093,7 +3137,9 @@ impl App {
         }
         self.mode = Mode::NoteMovePicker(MovePickerState {
             targets,
+            filter: String::new(),
             selected: 0,
+            scroll: 0,
             return_detail: matches!(self.mode, Mode::Detail),
         });
     }

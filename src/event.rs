@@ -62,11 +62,20 @@ fn theme_picker_key(app: &mut App, key: KeyEvent) {
 }
 
 fn move_picker_key(app: &mut App, key: KeyEvent) {
+    // Letters type into the filter, so navigation is arrows-only (plus Enter/Esc).
     match key.code {
-        KeyCode::Char('j') | KeyCode::Down => app.move_picker_move(1),
-        KeyCode::Char('k') | KeyCode::Up => app.move_picker_move(-1),
+        KeyCode::Down => app.move_picker_move(1),
+        KeyCode::Up => app.move_picker_move(-1),
         KeyCode::Enter => app.move_picker_confirm(),
-        KeyCode::Esc | KeyCode::Char('q') => app.move_picker_cancel(),
+        KeyCode::Esc => app.move_picker_cancel(),
+        KeyCode::Backspace => app.move_picker_backspace(),
+        KeyCode::Char(c)
+            if !key
+                .modifiers
+                .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+        {
+            app.move_picker_type(c)
+        }
         _ => {}
     }
 }

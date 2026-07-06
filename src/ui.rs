@@ -38,12 +38,16 @@ pub fn render(f: &mut Frame, app: &mut App) {
         render_note_view(f, app);
         return;
     }
+    // The move picker likewise needs &mut App to clamp its scroll offset.
+    if matches!(app.mode, Mode::MovePicker(_)) {
+        render_move_picker(f, app);
+        return;
+    }
 
     match &app.mode {
         Mode::Input(_) => render_input(f, app),
         Mode::Confirm(_) => render_confirm(f, app),
         Mode::ThemePicker(_) => render_theme_picker(f, app),
-        Mode::MovePicker(_) => render_move_picker(f, app),
         Mode::CopyMenu(_) => render_copy_menu(f, app),
         Mode::SortPicker(_) => render_sort_picker(f, app),
         Mode::NoteSortPicker(_) => render_note_sort_picker(f, app),
@@ -2173,47 +2177,109 @@ fn render_theme_picker(f: &mut Frame, app: &App) {
     f.render_widget(Paragraph::new(Text::from(lines)), inner);
 }
 
-fn render_move_picker(f: &mut Frame, app: &App) {
-    let Mode::MovePicker(state) = &app.mode else {
+fn render_move_picker(f: &mut Frame, app: &mut App) {
+    if !matches!(app.mode, Mode::MovePicker(_)) {
+        return;
+    }
+    let moving = app
+        .current_task()
+        .map(|t| t.title.clone())
+        .unwrap_or_default();
+    let filtered = app.move_picker_filtered();
+
+    // Chrome above/below the scrolling rows: 2 borders + subtitle + filter +
+    // blank + blank + footer = 7 lines. Cap the visible rows to what fits (and
+    // keep the popup from swallowing the whole screen).
+    const MAX_ROWS: u16 = 14;
+    let avail = f.area().height.saturating_sub(7).max(1);
+    let visible_rows = (filtered.len().max(1) as u16).min(avail).min(MAX_ROWS);
+
+    // Clamp the cursor and follow it with the scroll offset.
+    let (selected, scroll, filter) = if let Mode::MovePicker(state) = &mut app.mode {
+        if filtered.is_empty() {
+            state.selected = 0;
+        } else if state.selected >= filtered.len() {
+            state.selected = filtered.len() - 1;
+        }
+        let max_scroll = (filtered.len() as u16).saturating_sub(visible_rows);
+        let sel = state.selected as u16;
+        if sel < state.scroll {
+            state.scroll = sel;
+        } else if sel >= state.scroll + visible_rows {
+            state.scroll = sel + 1 - visible_rows;
+        }
+        state.scroll = state.scroll.min(max_scroll);
+        (state.selected, state.scroll, state.filter.clone())
+    } else {
         return;
     };
-    let area = centered_rect(f.area(), 56, state.targets.len() as u16 + 6);
+
+    let area = centered_rect(f.area(), 56, visible_rows + 7);
     overlay_clear(f, area);
     let block = overlay_block("Move to list", theme::accent());
     let inner = block.inner(area);
     f.render_widget(block, area);
 
-    let moving = app
-        .current_task()
-        .map(|t| t.title.clone())
-        .unwrap_or_default();
-    let mut lines: Vec<Line> = vec![
-        Line::from(Span::styled(
-            format!("Move \u{201c}{moving}\u{201d} to:"),
-            Style::default().fg(theme::muted()),
-        )),
-        Line::raw(""),
-    ];
-    for (i, &li) in state.targets.iter().enumerate() {
-        let list = &app.lists[li];
-        let selected = i == state.selected;
-        let marker = if selected { "\u{258e} " } else { "  " };
-        let name_style = if selected {
-            Style::default()
-                .fg(theme::accent())
-                .add_modifier(Modifier::BOLD)
-        } else {
-            Style::default().fg(theme::fg())
-        };
+    let mut lines: Vec<Line> = vec![Line::from(Span::styled(
+        format!("Move \u{201c}{moving}\u{201d} to:"),
+        Style::default().fg(theme::muted()),
+    ))];
+    // Filter row with a block cursor; a muted hint stands in when it's empty.
+    if filter.is_empty() {
         lines.push(Line::from(vec![
-            Span::styled(marker, Style::default().fg(theme::accent())),
-            Span::styled(format!("{:<22}", list.name), name_style),
+            Span::styled("Search: ", Style::default().fg(theme::muted())),
+            Span::styled("\u{2588}", Style::default().fg(theme::accent())),
             Span::styled(
-                format!("{}/{}", list.open_count(), list.tasks.len()),
-                Style::default().fg(theme::muted()),
+                " type to filter",
+                Style::default().fg(theme::sel_dim()),
             ),
         ]));
+    } else {
+        lines.push(Line::from(vec![
+            Span::styled("Search: ", Style::default().fg(theme::muted())),
+            Span::styled(filter, Style::default().fg(theme::fg())),
+            Span::styled("\u{2588}", Style::default().fg(theme::accent())),
+        ]));
     }
+    lines.push(Line::raw(""));
+
+    if filtered.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "  no lists match",
+            Style::default().fg(theme::muted()),
+        )));
+        for _ in 1..visible_rows {
+            lines.push(Line::raw(""));
+        }
+    } else {
+        let start = scroll as usize;
+        let end = (start + visible_rows as usize).min(filtered.len());
+        for (offset, &li) in filtered[start..end].iter().enumerate() {
+            let list = &app.lists[li];
+            let selected_row = start + offset == selected;
+            let marker = if selected_row { "\u{258e} " } else { "  " };
+            let name_style = if selected_row {
+                Style::default()
+                    .fg(theme::accent())
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(theme::fg())
+            };
+            lines.push(Line::from(vec![
+                Span::styled(marker, Style::default().fg(theme::accent())),
+                Span::styled(format!("{:<22}", list.name), name_style),
+                Span::styled(
+                    format!("{}/{}", list.open_count(), list.tasks.len()),
+                    Style::default().fg(theme::muted()),
+                ),
+            ]));
+        }
+        // Pad short pages so the footer stays anchored to the bottom.
+        for _ in (end - start)..visible_rows as usize {
+            lines.push(Line::raw(""));
+        }
+    }
+
     lines.push(Line::raw(""));
     lines.push(Line::from(Span::styled(
         "\u{2191}/\u{2193} choose \u{00b7} Enter move \u{00b7} Esc cancel",
@@ -2221,6 +2287,17 @@ fn render_move_picker(f: &mut Frame, app: &App) {
     )));
 
     f.render_widget(Paragraph::new(Text::from(lines)), inner);
+
+    // Scrollbar alongside the rows region when the filtered set overflows.
+    if filtered.len() as u16 > visible_rows {
+        let rows_area = Rect {
+            x: inner.x,
+            y: inner.y + 3,
+            width: inner.width,
+            height: visible_rows,
+        };
+        render_scrollbar(f, rows_area, filtered.len(), scroll as usize);
+    }
 }
 
 fn render_note_copy_menu(f: &mut Frame, app: &App) {
