@@ -293,10 +293,10 @@ fn render_sidebar(f: &mut Frame, area: Rect, app: &mut App) {
     }
 
     // With tags present, split the column: Lists on top (priority — it keeps the
-    // remainder, always at least half), Tags pinned to the bottom, capped at
-    // half the height and only as tall as the tags need. Overflowing tags scroll
-    // inside their own pane, so they can never take over the sidebar.
-    let cap = area.height / 2;
+    // remainder, always at least two thirds), Tags pinned to the bottom, capped
+    // at a third of the height and only as tall as the tags need. Overflowing
+    // tags scroll inside their own pane, so they can never take over the sidebar.
+    let cap = area.height / 3;
     let tags_needed = (tags.len() as u16).saturating_add(2); // + top/bottom border
     let tags_h = tags_needed.min(cap).max(3);
     let [lists_area, tags_area] =
@@ -711,7 +711,7 @@ fn render_notes_sidebar(f: &mut Frame, area: Rect, app: &mut App) {
     }
 
     // With tags present, split the column just like the Tasks sidebar.
-    let cap = area.height / 2;
+    let cap = area.height / 3;
     let tags_needed = (tags.len() as u16).saturating_add(2);
     let tags_h = tags_needed.min(cap).max(3);
     let [nb_area, tags_area] =

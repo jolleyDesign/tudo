@@ -607,12 +607,12 @@ pub fn handle_mouse(app: &mut App, m: MouseEvent) {
             }
         }
         MouseEventKind::ScrollDown => match app.active_tab {
-            Tab::Tasks => app.move_selection(1),
-            Tab::Notes => app.note_move_selection(1),
+            Tab::Tasks => app.scroll_selection(1),
+            Tab::Notes => app.note_scroll_selection(1),
         },
         MouseEventKind::ScrollUp => match app.active_tab {
-            Tab::Tasks => app.move_selection(-1),
-            Tab::Notes => app.note_move_selection(-1),
+            Tab::Tasks => app.scroll_selection(-1),
+            Tab::Notes => app.note_scroll_selection(-1),
         },
         _ => {}
     }

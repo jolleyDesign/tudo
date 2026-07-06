@@ -1389,6 +1389,28 @@ fn sidebar_navigation_flows_from_lists_into_tags() {
 }
 
 #[test]
+fn scroll_wheel_stops_at_the_lists_tags_boundary() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app_in(dir.path());
+    app.add_list("Alpha".to_string());
+    app.add_list("Beta".to_string());
+    app.select_list_index(0);
+    app.add_task("a #x".to_string());
+
+    // Unlike `j`/`k`, scrolling to the end of the lists stays on the last list
+    // instead of spilling into the tag pane.
+    app.select_list_index(1);
+    app.scroll_selection(1);
+    assert_eq!(app.selected_list_index(), Some(1));
+    assert_eq!(app.current_view(), Some(View::List(1)));
+
+    // From within the tags, the wheel likewise stays on the tags.
+    app.select_sidebar_row(tag_row(&app, "x"));
+    app.scroll_selection(-1);
+    assert_eq!(app.current_view(), Some(View::Tag("x".to_string())));
+}
+
+#[test]
 fn adding_a_task_is_refused_in_the_tag_view() {
     let dir = tempfile::tempdir().unwrap();
     let mut app = app_in(dir.path());

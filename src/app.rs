@@ -1248,6 +1248,38 @@ impl App {
         self.task_state.select(Some(0));
     }
 
+    /// Scroll-wheel movement, which (unlike `j`/`k`) stays within the section
+    /// the cursor is currently in. Reaching the end of the lists therefore
+    /// stops at the last list instead of spilling into the tags pane.
+    pub fn scroll_selection(&mut self, delta: isize) {
+        match self.mode {
+            Mode::Detail => self.move_subtask(delta),
+            _ => match self.focus {
+                Focus::Lists => self.scroll_list(delta),
+                Focus::Tasks => self.move_task(delta),
+            },
+        }
+    }
+
+    fn scroll_list(&mut self, delta: isize) {
+        let total = self.sidebar_rows().len();
+        if total == 0 {
+            return;
+        }
+        let lists = self.lists.len();
+        let cur = self.list_state.selected().unwrap_or(0);
+        // Clamp within the current section (lists, then tags) so the wheel
+        // doesn't cross the boundary between the two panes.
+        let (lo, hi) = if cur < lists {
+            (0, lists.saturating_sub(1))
+        } else {
+            (lists, total - 1)
+        };
+        let next = (cur as isize + delta).clamp(lo as isize, hi as isize) as usize;
+        self.list_state.select(Some(next));
+        self.task_state.select(Some(0));
+    }
+
     fn move_task(&mut self, delta: isize) {
         let len = self.visible_task_indices().len();
         if len == 0 {
@@ -2678,6 +2710,43 @@ impl App {
                 }
                 let cur = self.notebook_state.selected().unwrap_or(0) as isize;
                 let next = (cur + delta).clamp(0, len as isize - 1) as usize;
+                self.notebook_state.select(Some(next));
+                self.note_state.select(Some(0));
+            }
+            NotesFocus::Notes => {
+                let len = self.visible_note_refs().len();
+                if len == 0 {
+                    self.note_state.select(None);
+                    return;
+                }
+                let cur = self.selected_visible_note() as isize;
+                let next = (cur + delta).clamp(0, len as isize - 1) as usize;
+                self.note_state.select(Some(next));
+            }
+        }
+    }
+
+    /// Scroll-wheel movement for the Notes tab, staying within the section the
+    /// cursor is in so reaching the end of the notebooks doesn't spill into the
+    /// note-tags pane (mirrors [`App::scroll_selection`]).
+    pub fn note_scroll_selection(&mut self, delta: isize) {
+        if matches!(self.mode, Mode::Detail) {
+            return;
+        }
+        match self.notes_focus {
+            NotesFocus::Notebooks => {
+                let total = self.note_sidebar_rows().len();
+                if total == 0 {
+                    return;
+                }
+                let notebooks = self.notebooks.len();
+                let cur = self.notebook_state.selected().unwrap_or(0);
+                let (lo, hi) = if cur < notebooks {
+                    (0, notebooks.saturating_sub(1))
+                } else {
+                    (notebooks, total - 1)
+                };
+                let next = (cur as isize + delta).clamp(lo as isize, hi as isize) as usize;
                 self.notebook_state.select(Some(next));
                 self.note_state.select(Some(0));
             }
