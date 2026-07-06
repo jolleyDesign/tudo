@@ -346,6 +346,29 @@ pub struct MovePickerState {
     pub return_detail: bool,
 }
 
+/// State for the full-screen rendered note read view.
+#[derive(Debug, Clone, Default)]
+pub struct NoteViewState {
+    /// Vertical scroll offset in rendered (wrapped) rows.
+    pub scroll: u16,
+}
+
+/// One entry in the note link picker: a display label and where it jumps.
+#[derive(Debug, Clone)]
+pub struct NoteLinkEntry {
+    pub label: String,
+    pub target: NoteRef,
+}
+
+/// State for the "follow a link" picker (outgoing links + backlinks).
+#[derive(Debug, Clone)]
+pub struct NoteLinkPickerState {
+    pub entries: Vec<NoteLinkEntry>,
+    pub selected: usize,
+    /// Return to the read view (vs the note list) on cancel.
+    pub return_view: bool,
+}
+
 /// What part of the selected task a copy action puts on the clipboard.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CopyWhat {
@@ -452,6 +475,10 @@ pub enum Mode {
     NoteSortPicker(SortPickerState),
     NoteMovePicker(MovePickerState),
     NoteCopyMenu(CopyMenuState),
+    /// Full-screen rendered read view of the selected note.
+    NoteView(NoteViewState),
+    /// Picker to follow a `[[link]]` (outgoing or backlink).
+    NoteLinkPicker(NoteLinkPickerState),
     Settings,
     Help,
 }
@@ -541,6 +568,8 @@ pub struct Clickables {
     pub note_list_inner: Option<(Rect, usize)>,
     /// Header tab-strip chips and the tab each selects, for click-to-switch.
     pub tab_rects: Vec<(Tab, Rect)>,
+    /// Clickable `[[link]]` rects in the rendered read view and their targets.
+    pub note_view_links: Vec<(Rect, NoteRef)>,
 }
 
 pub struct App {
@@ -3185,6 +3214,159 @@ impl App {
             } else {
                 Mode::Normal
             };
+        }
+    }
+
+    // --- rendered read view + links ------------------------------------------
+
+    /// Open the full-screen rendered read view for the selected note.
+    pub fn open_note_view(&mut self) {
+        if self.current_note().is_some() {
+            self.mode = Mode::NoteView(NoteViewState::default());
+        }
+    }
+
+    /// Scroll the read view (clamped at the top; the bottom is clamped in the
+    /// renderer, which knows the wrapped height).
+    pub fn note_view_scroll(&mut self, delta: isize) {
+        if let Mode::NoteView(state) = &mut self.mode {
+            state.scroll = (state.scroll as isize + delta).max(0) as u16;
+        }
+    }
+
+    /// From the read view, drop into the raw editor for the same note.
+    pub fn note_view_edit(&mut self) {
+        if matches!(self.mode, Mode::NoteView(_)) {
+            self.start_edit_note_body();
+        }
+    }
+
+    /// Find a note by title (case-insensitive) across every notebook.
+    pub fn resolve_note_link(&self, title: &str) -> Option<NoteRef> {
+        let want = title.trim().to_lowercase();
+        for (ni, nb) in self.notebooks.iter().enumerate() {
+            for (ti, note) in nb.notes.iter().enumerate() {
+                if note.title.to_lowercase() == want {
+                    return Some(NoteRef {
+                        notebook: ni,
+                        note: ti,
+                    });
+                }
+            }
+        }
+        None
+    }
+
+    /// Notes that link to `title` via `[[title]]` (case-insensitive), excluding
+    /// the note at `exclude`.
+    pub fn note_backlinks(&self, title: &str, exclude: Option<NoteRef>) -> Vec<NoteRef> {
+        let want = title.trim().to_lowercase();
+        let mut out = Vec::new();
+        for (ni, nb) in self.notebooks.iter().enumerate() {
+            for (ti, note) in nb.notes.iter().enumerate() {
+                let here = NoteRef {
+                    notebook: ni,
+                    note: ti,
+                };
+                if Some(here) == exclude {
+                    continue;
+                }
+                if note.link_targets().iter().any(|t| t.to_lowercase() == want) {
+                    out.push(here);
+                }
+            }
+        }
+        out
+    }
+
+    /// Select the notebook + note at `r` and open its read view. Clears any note
+    /// search so the target is visible.
+    pub fn jump_to_note(&mut self, r: NoteRef) {
+        if r.notebook >= self.notebooks.len() || r.note >= self.notebooks[r.notebook].notes.len() {
+            return;
+        }
+        self.note_query.clear();
+        self.notes_focus = NotesFocus::Notes;
+        self.notebook_state.select(Some(r.notebook));
+        let pos = self
+            .visible_note_refs()
+            .iter()
+            .position(|&x| x == r)
+            .unwrap_or(0);
+        self.note_state.select(Some(pos));
+        self.open_note_view();
+    }
+
+    /// Open the link picker for the selected note: resolvable outgoing links
+    /// first, then backlinks. `return_view` remembers whether to fall back to the
+    /// read view on cancel.
+    pub fn start_note_link_picker(&mut self, return_view: bool) {
+        let Some(r) = self.current_note_ref() else {
+            return;
+        };
+        let note = &self.notebooks[r.notebook].notes[r.note];
+        let mut entries: Vec<NoteLinkEntry> = Vec::new();
+        for target in note.link_targets() {
+            if let Some(dest) = self.resolve_note_link(&target)
+                && dest != r
+            {
+                entries.push(NoteLinkEntry {
+                    label: format!(
+                        "\u{2192} {}",
+                        self.notebooks[dest.notebook].notes[dest.note].title
+                    ),
+                    target: dest,
+                });
+            }
+        }
+        let title = note.title.clone();
+        for back in self.note_backlinks(&title, Some(r)) {
+            entries.push(NoteLinkEntry {
+                label: format!(
+                    "\u{2190} {} (backlink)",
+                    self.notebooks[back.notebook].notes[back.note].title
+                ),
+                target: back,
+            });
+        }
+        if entries.is_empty() {
+            self.set_status("no links in or to this note".to_string());
+            return;
+        }
+        self.mode = Mode::NoteLinkPicker(NoteLinkPickerState {
+            entries,
+            selected: 0,
+            return_view,
+        });
+    }
+
+    pub fn note_link_picker_move(&mut self, delta: isize) {
+        if let Mode::NoteLinkPicker(state) = &mut self.mode {
+            let n = state.entries.len() as isize;
+            if n == 0 {
+                return;
+            }
+            state.selected = ((((state.selected as isize + delta) % n) + n) % n) as usize;
+        }
+    }
+
+    pub fn note_link_picker_confirm(&mut self) {
+        let target = match &self.mode {
+            Mode::NoteLinkPicker(state) => state.entries.get(state.selected).map(|e| e.target),
+            _ => return,
+        };
+        if let Some(r) = target {
+            self.jump_to_note(r);
+        }
+    }
+
+    pub fn note_link_picker_cancel(&mut self) {
+        if let Mode::NoteLinkPicker(state) = &self.mode {
+            if state.return_view {
+                self.open_note_view();
+            } else {
+                self.mode = Mode::Normal;
+            }
         }
     }
 

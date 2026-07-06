@@ -32,6 +32,13 @@ pub fn render(f: &mut Frame, app: &mut App) {
 
     render_base(f, app);
 
+    // The rendered read view needs &mut App (to clamp scroll and record link
+    // rects), so it's handled before the immutable-borrow match below.
+    if matches!(app.mode, Mode::NoteView(_)) {
+        render_note_view(f, app);
+        return;
+    }
+
     match &app.mode {
         Mode::Input(_) => render_input(f, app),
         Mode::Confirm(_) => render_confirm(f, app),
@@ -42,6 +49,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
         Mode::NoteSortPicker(_) => render_note_sort_picker(f, app),
         Mode::NoteMovePicker(_) => render_note_move_picker(f, app),
         Mode::NoteCopyMenu(_) => render_note_copy_menu(f, app),
+        Mode::NoteLinkPicker(_) => render_note_link_picker(f, app),
         Mode::Settings => render_settings(f, app),
         Mode::Help => render_help(f, app),
         _ => {}
@@ -940,12 +948,7 @@ fn markdown_line(line: &str) -> Line<'static> {
         let marker_len = hashes + leading_spaces(&rest[hashes..]);
         let (marker, content) = rest.split_at(marker_len);
         spans.push(Span::styled(marker.to_string(), muted));
-        spans.push(Span::styled(
-            content.to_string(),
-            Style::default()
-                .fg(theme::accent())
-                .add_modifier(Modifier::BOLD),
-        ));
+        spans.push(Span::styled(content.to_string(), heading_style()));
         return Line::from(spans);
     }
 
@@ -997,6 +1000,23 @@ fn inline_spans(text: &str) -> Vec<Span<'static>> {
     let mut i = 0;
     while i < chars.len() {
         let c = chars[i];
+        // Wiki link: [[note title]] — brackets dimmed, title in accent.
+        if c == '['
+            && i + 1 < chars.len()
+            && chars[i + 1] == '['
+            && let Some(close) = double_bracket_close(&chars, i + 2)
+            && close > i + 2
+        {
+            flush(&mut plain, base, &mut spans);
+            spans.push(Span::styled("[[".to_string(), muted));
+            spans.push(Span::styled(
+                chars[i + 2..close].iter().collect::<String>(),
+                Style::default().fg(theme::accent()),
+            ));
+            spans.push(Span::styled("]]".to_string(), muted));
+            i = close + 2;
+            continue;
+        }
         // Inline code: `code`
         if c == '`'
             && let Some(close) = (i + 1..chars.len()).find(|&j| chars[j] == '`')
@@ -1010,6 +1030,23 @@ fn inline_spans(text: &str) -> Vec<Span<'static>> {
             ));
             spans.push(Span::styled("`".to_string(), muted));
             i = close + 1;
+            continue;
+        }
+        // Strikethrough: ~~text~~
+        if c == '~'
+            && i + 1 < chars.len()
+            && chars[i + 1] == '~'
+            && let Some(close) = double_char(&chars, i + 2, '~')
+            && close > i + 2
+        {
+            flush(&mut plain, base, &mut spans);
+            spans.push(Span::styled("~~".to_string(), muted));
+            spans.push(Span::styled(
+                chars[i + 2..close].iter().collect::<String>(),
+                base.add_modifier(Modifier::CROSSED_OUT),
+            ));
+            spans.push(Span::styled("~~".to_string(), muted));
+            i = close + 2;
             continue;
         }
         // Bold: **text**
@@ -1026,6 +1063,22 @@ fn inline_spans(text: &str) -> Vec<Span<'static>> {
             ));
             spans.push(Span::styled("**".to_string(), muted));
             i = close + 2;
+            continue;
+        }
+        // Italic: *text* or _text_
+        if (c == '*' || c == '_')
+            && opens_italic(&chars, i, c)
+            && let Some(close) = single_char(&chars, i + 1, c)
+            && close > i + 1
+        {
+            flush(&mut plain, base, &mut spans);
+            spans.push(Span::styled(c.to_string(), muted));
+            spans.push(Span::styled(
+                chars[i + 1..close].iter().collect::<String>(),
+                base.add_modifier(Modifier::ITALIC),
+            ));
+            spans.push(Span::styled(c.to_string(), muted));
+            i = close + 1;
             continue;
         }
         plain.push(c);
@@ -1053,6 +1106,508 @@ fn double_star(chars: &[char], start: usize) -> Option<usize> {
         j += 1;
     }
     None
+}
+
+/// Index of the next doubled `ch` (e.g. `~~`) at or after `start`, or `None`.
+fn double_char(chars: &[char], start: usize, ch: char) -> Option<usize> {
+    let mut j = start;
+    while j + 1 < chars.len() {
+        if chars[j] == ch && chars[j + 1] == ch {
+            return Some(j);
+        }
+        j += 1;
+    }
+    None
+}
+
+/// Index of the next single `ch` at or after `start`, or `None`. Used for
+/// `*italic*` / `_italic_` spans.
+fn single_char(chars: &[char], start: usize, ch: char) -> Option<usize> {
+    (start..chars.len()).find(|&j| chars[j] == ch)
+}
+
+/// True when an italic marker at `i` opens a plausible span: it isn't part of a
+/// doubled `**`/`__`, isn't mid-word (so `snake_case` and `2*3` are left alone),
+/// and isn't immediately followed by whitespace.
+fn opens_italic(chars: &[char], i: usize, ch: char) -> bool {
+    let prev_ok = i == 0 || !chars[i - 1].is_alphanumeric();
+    let next_ok = chars
+        .get(i + 1)
+        .is_some_and(|&n| n != ch && !n.is_whitespace());
+    prev_ok && next_ok
+}
+
+/// Heading style. Terminals can't scale font size, so every level renders the
+/// same (accent + bold) rather than an arbitrary weight/colour hierarchy.
+fn heading_style() -> Style {
+    Style::default()
+        .fg(theme::accent())
+        .add_modifier(Modifier::BOLD)
+}
+
+/// Index of the next `]]` at or after `start`, or `None`.
+fn double_bracket_close(chars: &[char], start: usize) -> Option<usize> {
+    let mut j = start;
+    while j + 1 < chars.len() {
+        if chars[j] == ']' && chars[j + 1] == ']' {
+            return Some(j);
+        }
+        j += 1;
+    }
+    None
+}
+
+// --- rendered markdown (read view) ------------------------------------------
+
+/// A clickable link in the rendered read view: its wrapped-row index, starting
+/// column and length within the text area, and the note title it targets.
+struct MdLink {
+    row: usize,
+    col: u16,
+    len: u16,
+    target: String,
+}
+
+/// One rendered character with its style and, for `[[wiki]]` links, its target.
+#[derive(Clone)]
+struct MdCell {
+    ch: char,
+    style: Style,
+    link: Option<String>,
+}
+
+/// Render a markdown body into styled, word-wrapped rows (markers hidden) plus
+/// the clickable link positions. This is the "rendered" counterpart to the raw
+/// dimmed editor.
+fn render_markdown(body: &str, width: u16) -> (Vec<Line<'static>>, Vec<MdLink>) {
+    let width = width.max(1) as usize;
+    let logical = md_logical_lines(body, width);
+
+    let mut lines: Vec<Line> = Vec::new();
+    let mut links: Vec<MdLink> = Vec::new();
+    for cells in &logical {
+        for row in wrap_cells(cells, width) {
+            let row_idx = lines.len();
+            let mut spans: Vec<Span> = Vec::new();
+            let mut col = 0u16;
+            let mut i = 0;
+            while i < row.len() {
+                let style = row[i].style;
+                let link = row[i].link.clone();
+                let start = i;
+                while i < row.len() && row[i].style == style && row[i].link == link {
+                    i += 1;
+                }
+                let text: String = row[start..i].iter().map(|c| c.ch).collect();
+                let len = (i - start) as u16;
+                if let Some(target) = &link {
+                    links.push(MdLink {
+                        row: row_idx,
+                        col,
+                        len,
+                        target: target.clone(),
+                    });
+                }
+                spans.push(Span::styled(text, style));
+                col += len;
+            }
+            lines.push(Line::from(spans));
+        }
+    }
+    (lines, links)
+}
+
+/// Turn a body into logical rendered lines (one per source line, unwrapped),
+/// with markers hidden and block/inline styling applied.
+fn md_logical_lines(body: &str, width: usize) -> Vec<Vec<MdCell>> {
+    let base = Style::default().fg(theme::fg());
+    let muted = Style::default().fg(theme::muted());
+
+    let mut out: Vec<Vec<MdCell>> = Vec::new();
+    let mut in_code = false;
+    for raw in body.lines() {
+        let trimmed = raw.trim_start();
+        // Fenced code blocks: fences are hidden, inner lines render as code.
+        if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
+            in_code = !in_code;
+            continue;
+        }
+        if in_code {
+            out.push(styled_cells(raw, Style::default().fg(theme::green())));
+            continue;
+        }
+        // Horizontal rule.
+        if is_hr(trimmed) {
+            out.push(styled_cells(&"\u{2500}".repeat(width), muted));
+            continue;
+        }
+        // Heading.
+        let hashes = trimmed.chars().take_while(|&c| c == '#').count();
+        if (1..=6).contains(&hashes) && trimmed[hashes..].starts_with(' ') {
+            let content = trimmed[hashes..].trim_start();
+            out.push(inline_cells(content, heading_style()));
+            continue;
+        }
+        // Blockquote.
+        if let Some(rest) = trimmed.strip_prefix('>') {
+            let mut cells = styled_cells("\u{2502} ", muted);
+            cells.extend(inline_cells(rest.trim_start(), muted));
+            out.push(cells);
+            continue;
+        }
+        // Unordered list.
+        if matches!(trimmed.chars().next(), Some('-' | '*' | '+')) && trimmed[1..].starts_with(' ')
+        {
+            let mut cells = styled_cells("\u{2022} ", list_marker_style());
+            cells.extend(inline_cells(trimmed[1..].trim_start(), base));
+            out.push(cells);
+            continue;
+        }
+        // Ordered list.
+        let digits = trimmed.chars().take_while(|c| c.is_ascii_digit()).count();
+        if digits > 0
+            && matches!(trimmed[digits..].chars().next(), Some('.' | ')'))
+            && trimmed[digits + 1..].starts_with(' ')
+        {
+            let marker = format!("{} ", &trimmed[..digits + 1]);
+            let mut cells = styled_cells(&marker, list_marker_style());
+            cells.extend(inline_cells(trimmed[digits + 1..].trim_start(), base));
+            out.push(cells);
+            continue;
+        }
+        out.push(inline_cells(raw, base));
+    }
+    out
+}
+
+fn list_marker_style() -> Style {
+    Style::default().fg(theme::accent())
+}
+
+/// True for a markdown horizontal rule (3+ of the same `-`, `*` or `_`).
+fn is_hr(s: &str) -> bool {
+    let s = s.trim();
+    (s.len() >= 3)
+        && (s.chars().all(|c| c == '-')
+            || s.chars().all(|c| c == '*')
+            || s.chars().all(|c| c == '_'))
+}
+
+/// Cells for `text` all in one style, no link.
+fn styled_cells(text: &str, style: Style) -> Vec<MdCell> {
+    text.chars()
+        .map(|ch| MdCell {
+            ch,
+            style,
+            link: None,
+        })
+        .collect()
+}
+
+/// Inline markdown to cells: `[[wiki]]` (accent + underline, carrying its
+/// target), `` `code` `` (code colour), `**bold**` (bold), markers hidden.
+fn inline_cells(text: &str, base: Style) -> Vec<MdCell> {
+    let chars: Vec<char> = text.chars().collect();
+    let mut cells: Vec<MdCell> = Vec::new();
+    let link_style = Style::default()
+        .fg(theme::accent())
+        .add_modifier(Modifier::UNDERLINED);
+    let code_style = Style::default().fg(theme::green());
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        if c == '['
+            && i + 1 < chars.len()
+            && chars[i + 1] == '['
+            && let Some(close) = double_bracket_close(&chars, i + 2)
+            && close > i + 2
+        {
+            let target: String = chars[i + 2..close]
+                .iter()
+                .collect::<String>()
+                .trim()
+                .to_string();
+            for ch in chars[i + 2..close].iter() {
+                cells.push(MdCell {
+                    ch: *ch,
+                    style: link_style,
+                    link: Some(target.clone()),
+                });
+            }
+            i = close + 2;
+            continue;
+        }
+        if c == '`'
+            && let Some(close) = (i + 1..chars.len()).find(|&j| chars[j] == '`')
+            && close > i + 1
+        {
+            for ch in chars[i + 1..close].iter() {
+                cells.push(MdCell {
+                    ch: *ch,
+                    style: code_style,
+                    link: None,
+                });
+            }
+            i = close + 1;
+            continue;
+        }
+        if c == '~'
+            && i + 1 < chars.len()
+            && chars[i + 1] == '~'
+            && let Some(close) = double_char(&chars, i + 2, '~')
+            && close > i + 2
+        {
+            push_run(
+                &mut cells,
+                &chars[i + 2..close],
+                base.add_modifier(Modifier::CROSSED_OUT),
+            );
+            i = close + 2;
+            continue;
+        }
+        if c == '*'
+            && i + 1 < chars.len()
+            && chars[i + 1] == '*'
+            && let Some(close) = double_star(&chars, i + 2)
+        {
+            push_run(
+                &mut cells,
+                &chars[i + 2..close],
+                base.add_modifier(Modifier::BOLD),
+            );
+            i = close + 2;
+            continue;
+        }
+        if (c == '*' || c == '_')
+            && opens_italic(&chars, i, c)
+            && let Some(close) = single_char(&chars, i + 1, c)
+            && close > i + 1
+        {
+            push_run(
+                &mut cells,
+                &chars[i + 1..close],
+                base.add_modifier(Modifier::ITALIC),
+            );
+            i = close + 1;
+            continue;
+        }
+        cells.push(MdCell {
+            ch: c,
+            style: base,
+            link: None,
+        });
+        i += 1;
+    }
+    cells
+}
+
+/// Push a run of characters as (linkless) cells sharing one style.
+fn push_run(cells: &mut Vec<MdCell>, chars: &[char], style: Style) {
+    for &ch in chars {
+        cells.push(MdCell {
+            ch,
+            style,
+            link: None,
+        });
+    }
+}
+
+/// Word-wrap a logical line of cells to `width`, hard-splitting any single word
+/// longer than the width. An empty input yields one empty row (a blank line).
+fn wrap_cells(cells: &[MdCell], width: usize) -> Vec<Vec<MdCell>> {
+    if cells.is_empty() {
+        return vec![Vec::new()];
+    }
+    let mut rows: Vec<Vec<MdCell>> = Vec::new();
+    let mut cur: Vec<MdCell> = Vec::new();
+    let mut i = 0;
+    while i < cells.len() {
+        if cells[i].ch == ' ' {
+            if cur.len() < width {
+                cur.push(cells[i].clone());
+            }
+            i += 1;
+            continue;
+        }
+        let start = i;
+        while i < cells.len() && cells[i].ch != ' ' {
+            i += 1;
+        }
+        let word = &cells[start..i];
+        if word.len() > width {
+            for c in word {
+                if cur.len() >= width {
+                    rows.push(std::mem::take(&mut cur));
+                }
+                cur.push(c.clone());
+            }
+        } else {
+            if cur.len() + word.len() > width {
+                while cur.last().map(|c| c.ch == ' ').unwrap_or(false) {
+                    cur.pop();
+                }
+                rows.push(std::mem::take(&mut cur));
+            }
+            cur.extend(word.iter().cloned());
+        }
+    }
+    rows.push(cur);
+    rows
+}
+
+fn render_note_view(f: &mut Frame, app: &mut App) {
+    let screen = f.area();
+    let body = Rect {
+        x: screen.x,
+        y: screen.y.saturating_add(1),
+        width: screen.width,
+        height: screen.height.saturating_sub(2),
+    };
+    overlay_clear(f, body);
+
+    let Some((title, content)) = app
+        .current_note()
+        .map(|n| (n.title.clone(), n.body.clone()))
+    else {
+        app.clickables.note_view_links.clear();
+        return;
+    };
+    let block = pane_block(&format!("Note · {title}"), true);
+    let inner = block.inner(body);
+    f.render_widget(block, body);
+    let [text_area, hint_area] =
+        Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(inner);
+    let width = text_area.width.max(1);
+    let height = text_area.height.max(1);
+
+    let (mut rows, mut links) = render_markdown(&content, width);
+    if content.trim().is_empty() {
+        rows = vec![Line::from(Span::styled(
+            "(empty — Tab to edit, E for $EDITOR)",
+            Style::default().fg(theme::muted()),
+        ))];
+    }
+
+    // Append a backlinks section (each backlink is itself a clickable link).
+    let here = app.current_note_ref();
+    let backlinks = app.note_backlinks(&title, here);
+    if !backlinks.is_empty() {
+        rows.push(Line::raw(""));
+        rows.push(Line::from(Span::styled(
+            "Linked from",
+            Style::default()
+                .fg(theme::accent())
+                .add_modifier(Modifier::BOLD),
+        )));
+        for b in &backlinks {
+            let bt = app.notebooks[b.notebook].notes[b.note].title.clone();
+            links.push(MdLink {
+                row: rows.len(),
+                col: 2,
+                len: bt.chars().count() as u16,
+                target: bt.clone(),
+            });
+            rows.push(Line::from(vec![
+                Span::styled("\u{2190} ", Style::default().fg(theme::muted())),
+                Span::styled(
+                    bt,
+                    Style::default()
+                        .fg(theme::accent())
+                        .add_modifier(Modifier::UNDERLINED),
+                ),
+            ]));
+        }
+    }
+
+    // Clamp the scroll now that we know the wrapped height.
+    let total = rows.len() as u16;
+    let max_scroll = total.saturating_sub(height);
+    let scroll = if let Mode::NoteView(state) = &mut app.mode {
+        state.scroll = state.scroll.min(max_scroll);
+        state.scroll
+    } else {
+        0
+    };
+
+    let visible: Vec<Line> = rows
+        .into_iter()
+        .skip(scroll as usize)
+        .take(height as usize)
+        .collect();
+    f.render_widget(Paragraph::new(Text::from(visible)), text_area);
+
+    // Record clickable rects for visible, resolvable links.
+    app.clickables.note_view_links.clear();
+    for l in &links {
+        if l.row >= scroll as usize
+            && l.row < scroll as usize + height as usize
+            && let Some(r) = app.resolve_note_link(&l.target)
+        {
+            app.clickables.note_view_links.push((
+                Rect {
+                    x: text_area.x + l.col,
+                    y: text_area.y + (l.row as u16 - scroll),
+                    width: l.len,
+                    height: 1,
+                },
+                r,
+            ));
+        }
+    }
+
+    let more = if total > height {
+        "  ·  j/k scroll"
+    } else {
+        ""
+    };
+    f.render_widget(
+        Paragraph::new(Line::from(Span::styled(
+            format!("Tab edit · f follow link · Esc back{more}"),
+            Style::default().fg(theme::muted()),
+        ))),
+        hint_area,
+    );
+}
+
+fn render_note_link_picker(f: &mut Frame, app: &App) {
+    let Mode::NoteLinkPicker(state) = &app.mode else {
+        return;
+    };
+    let area = centered_rect(f.area(), 60, state.entries.len() as u16 + 6);
+    overlay_clear(f, area);
+    let block = overlay_block("Follow link", theme::accent());
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+
+    let mut lines: Vec<Line> = vec![
+        Line::from(Span::styled(
+            "Jump to:",
+            Style::default().fg(theme::muted()),
+        )),
+        Line::raw(""),
+    ];
+    for (i, entry) in state.entries.iter().enumerate() {
+        let selected = i == state.selected;
+        let marker = if selected { "\u{258e} " } else { "  " };
+        let name_style = if selected {
+            Style::default()
+                .fg(theme::accent())
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(theme::fg())
+        };
+        lines.push(Line::from(vec![
+            Span::styled(marker, Style::default().fg(theme::accent())),
+            Span::styled(entry.label.clone(), name_style),
+        ]));
+    }
+    lines.push(Line::raw(""));
+    lines.push(Line::from(Span::styled(
+        "\u{2191}/\u{2193} choose \u{00b7} Enter jump \u{00b7} Esc cancel",
+        Style::default().fg(theme::muted()),
+    )));
+
+    f.render_widget(Paragraph::new(Text::from(lines)), inner);
 }
 
 fn render_footer(f: &mut Frame, area: Rect, app: &App) {
@@ -1246,7 +1801,7 @@ fn render_note_body_editor(f: &mut Frame, app: &App, input: &crate::app::InputSt
     );
     f.render_widget(
         Paragraph::new(Line::from(Span::styled(
-            "Enter = newline  ·  Esc or Ctrl+S = save & close",
+            "Enter = newline  ·  Tab = read view  ·  Esc or Ctrl+S = save & close",
             Style::default().fg(theme::muted()),
         ))),
         hint_area,
@@ -1504,7 +2059,11 @@ fn render_help(f: &mut Frame, app: &App) {
                     "move cursor",
                     LW,
                 ),
-                row(&keys_for(app, &[Action::Activate]), "open / read", LW),
+                row(
+                    &keys_for(app, &[Action::Activate]),
+                    "open note / drill in",
+                    LW,
+                ),
                 row(&keys_for(app, &[Action::Back]), "back / clear", LW),
                 tab_row.clone(),
                 Line::raw(""),

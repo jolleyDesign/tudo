@@ -31,9 +31,10 @@ A fast, local-first todo list **and markdown notebook** for your terminal. Fully
   click a checkbox to toggle, scroll to move.
 - **Search & filter**: substring search across titles/tags/notes and a
   status filter (all / active / done).
-- **Markdown notes**: organise notes into notebooks, write them in plain
-  markdown, tag them inline (`#tag`) as you create them, pin, archive, and pop
-  any note open in your `$EDITOR` (see [Notes](#notes)).
+- **Markdown notes**: organise notes into notebooks; write them in plain
+  markdown with a rendered read view; link notes with `[[wiki links]]` and
+  backlinks; tag inline (`#tag`), pin, archive, and pop any note open in your
+  `$EDITOR` (see [Notes](#notes)).
 - **Human-readable storage**: one pretty-printed JSON file per list and one
   `.md` file per note, written atomically so a crash can't corrupt your data.
 - **Local-first**: nothing leaves your machine.
@@ -201,11 +202,20 @@ note below it. Press `Enter` on a note to open it in the **full-screen editor**
 (`Esc` or `Ctrl+S` saves and closes — it autosaves either way); for longer
 writing, `E` hands the file to your `$EDITOR`.
 
-Notes are plain markdown, and the editor and preview **dim the markup** —
-heading `#`s, list bullets, blockquote `>`s, code fences, and inline
-`` ` ``/`**` delimiters recede into a muted colour so the text you wrote stands
-out. Tags and pinning are stored in a small YAML frontmatter block at the top of
-each file, so the files stay portable and can be edited by any other tool.
+Notes are plain markdown. In the raw editor and the preview the markup is
+**dimmed** — heading `#`s, list bullets, blockquote `>`s, code fences, and inline
+`` ` ``/`**` delimiters recede into a muted colour so your text stands out. In
+the open note, press `Tab` to flip to a **rendered read view** — headings, lists,
+blockquotes, rules, code blocks and links laid out properly, scrollable with the
+arrows/`j`/`k`/`PageUp`/`Down`/wheel — and `Tab` again to jump back to editing.
+Tags and pinning are stored in a small YAML frontmatter block at the top of each
+file, so the files stay portable and can be edited by any other tool.
+
+**Links between notes.** Write `[[Note title]]` anywhere in a note to link to
+another note. In the rendered read view, press `f` (or click a link) to open the
+**follow-link** picker — it lists this note's outgoing links *and* its backlinks
+("linked from"), and jumps to whichever you pick. Each note's read view shows a
+**Linked from** section listing the notes that point at it.
 
 **Notes-tab keys** (the same keys as the Tasks tab, doing the notebook/note
 equivalent):
@@ -215,6 +225,8 @@ equivalent):
 | `a` / `A` | add a note / add a notebook — type `#tag` tokens in the note title to tag it (like the task quick-add) |
 | `e` | edit the note's title, or rename the notebook when the Notebooks pane is focused |
 | `Enter` / `n` | open the full-screen body editor — arrow keys & `PageUp`/`Down` (and the scroll wheel) navigate and it scrolls for long notes; `Enter` inserts a newline; `Esc` or `Ctrl+S` saves & closes |
+| `Tab` (in an open note) | flip between the raw editor and the rendered read view |
+| `f` (in the read view) | follow a `[[link]]` — picker of outgoing links + backlinks (or click a link) |
 | `E` | open the selected note in your `$EDITOR` (`$VISUAL`/`$EDITOR`, falling back to `vi`) |
 | `t` | edit the note's tags |
 | `*` | pin / unpin the note (pinned notes float to the top) |
@@ -227,9 +239,6 @@ equivalent):
 | `m` | move the note to another notebook (also how you unarchive) |
 | `X` | delete the selected note or notebook (asks to confirm) |
 | `#` | jump to the note-tags pane; select a tag to see every note carrying it across all notebooks |
-
-The built-in editor is full-screen; for longer writing, `E` hands the file to
-your `$EDITOR` and reloads it when you're done.
 
 Just like tasks, notes have an **Archived** notebook pinned to the bottom of the
 sidebar (dimmed): `d` tucks a note away there, `m` moves it back out to

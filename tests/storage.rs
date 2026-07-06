@@ -275,6 +275,17 @@ fn parse_note_title_extracts_hash_tags() {
 }
 
 #[test]
+fn note_link_targets_extracts_wiki_links() {
+    let targets = model::note_link_targets(
+        "See [[Alpha]] and [[ Beta ]], plus [[Alpha]] again. Empty [[]] is ignored.",
+    );
+    assert_eq!(targets, vec!["Alpha", "Beta"]);
+    assert!(model::note_link_targets("no links here").is_empty());
+    // An unclosed [[ doesn't hang or match.
+    assert!(model::note_link_targets("dangling [[ open").is_empty());
+}
+
+#[test]
 fn sanitize_and_unique_notebook_names() {
     let dir = tempfile::tempdir().unwrap();
     // Readable folder names are kept (spaces, case), unsafe chars dropped and

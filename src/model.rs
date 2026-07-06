@@ -530,6 +530,12 @@ impl Note {
         self.body.split_whitespace().count()
     }
 
+    /// Wiki-link targets (`[[note title]]`) referenced in the body, in order,
+    /// deduped. Used for following links and building backlinks.
+    pub fn link_targets(&self) -> Vec<String> {
+        note_link_targets(&self.body)
+    }
+
     /// Substring match across title, body and tags (case-insensitive).
     pub fn matches_query(&self, query: &str) -> bool {
         if query.is_empty() {
@@ -720,6 +726,25 @@ impl Notebook {
     pub fn is_archive(&self) -> bool {
         self.slug == ARCHIVE_NOTEBOOK_SLUG
     }
+}
+
+/// Extract `[[wiki link]]` targets from a markdown body, in order of first
+/// appearance, deduped and trimmed. Empty `[[]]` and unclosed `[[` are ignored.
+pub fn note_link_targets(body: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut rest = body;
+    while let Some(start) = rest.find("[[") {
+        let after = &rest[start + 2..];
+        let Some(end) = after.find("]]") else {
+            break;
+        };
+        let target = after[..end].trim();
+        if !target.is_empty() && !out.iter().any(|t| t == target) {
+            out.push(target.to_string());
+        }
+        rest = &after[end + 2..];
+    }
+    out
 }
 
 /// Parse a new-note title, pulling `#tag` tokens out of it the way the task

@@ -4,6 +4,7 @@ use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::buffer::Buffer;
 use ratatui::crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+use ratatui::style::Modifier;
 use tudo::app::{App, Mode, Tab};
 use tudo::keybind::{Keymap, Overrides};
 use tudo::model::Priority;
@@ -402,6 +403,93 @@ fn markdown_markers_are_dimmed_in_the_editor() {
         theme::accent(),
         "heading text should be accent"
     );
+}
+
+#[test]
+fn read_view_renders_markdown_and_hides_markers() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = App::new(Some(dir.path().to_path_buf())).unwrap();
+    app.switch_tab(Tab::Notes);
+    app.add_notebook("N".to_string());
+    app.add_note("Target".to_string());
+    app.add_note("Doc".to_string());
+    app.set_current_note_body("# Heading\n\nSee [[Target]] here.".to_string());
+    app.note_focus_notes();
+    app.open_note_view();
+
+    let text = render_to_string(&mut app, 80, 20);
+    assert!(text.contains("Heading"), "heading text shown: {text}");
+    assert!(!text.contains("# Heading"), "heading marker hidden: {text}");
+    assert!(text.contains("Target"), "link text shown: {text}");
+    assert!(!text.contains("[[Target]]"), "link brackets hidden: {text}");
+}
+
+#[test]
+fn read_view_styles_headings_and_inline() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = App::new(Some(dir.path().to_path_buf())).unwrap();
+    app.switch_tab(Tab::Notes);
+    app.add_notebook("N".to_string());
+    app.add_note("Doc".to_string());
+    app.set_current_note_body("# One\n## Two\n\n~~gone~~ *slanted*".to_string());
+    app.note_focus_notes();
+    app.open_note_view();
+
+    let buf = render_to_buffer(&mut app, 80, 20);
+
+    // Every heading level renders the same: bold, not underlined.
+    let (c1, r1) = find_needle(&buf, "One");
+    let h1 = buf.cell((c1, r1)).unwrap().modifier;
+    let (c2, r2) = find_needle(&buf, "Two");
+    let h2 = buf.cell((c2, r2)).unwrap().modifier;
+    assert!(
+        h1.contains(Modifier::BOLD) && h2.contains(Modifier::BOLD),
+        "headings are bold"
+    );
+    assert!(
+        !h1.contains(Modifier::UNDERLINED) && !h2.contains(Modifier::UNDERLINED),
+        "headings are uniform (no per-level underline)"
+    );
+
+    // Strikethrough and italic render (markers hidden).
+    let text = buffer_text(&buf);
+    assert!(
+        text.contains("gone") && !text.contains("~~"),
+        "strike markers hidden: {text}"
+    );
+    assert!(text.contains("slanted"), "italic text shown: {text}");
+    let (cs, rs) = find_needle(&buf, "gone");
+    assert!(
+        buf.cell((cs, rs))
+            .unwrap()
+            .modifier
+            .contains(Modifier::CROSSED_OUT),
+        "strikethrough applied"
+    );
+    let (ci, ri) = find_needle(&buf, "slanted");
+    assert!(
+        buf.cell((ci, ri))
+            .unwrap()
+            .modifier
+            .contains(Modifier::ITALIC),
+        "italic applied"
+    );
+}
+
+#[test]
+fn note_link_picker_renders() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = App::new(Some(dir.path().to_path_buf())).unwrap();
+    app.switch_tab(Tab::Notes);
+    app.add_notebook("N".to_string());
+    app.add_note("Target".to_string());
+    app.add_note("Doc".to_string());
+    app.set_current_note_body("[[Target]]".to_string());
+    app.start_note_link_picker(false);
+
+    let text = render_to_string(&mut app, 80, 24);
+    assert!(text.contains("Follow link"), "picker title: {text}");
+    assert!(text.contains("Target"), "link entry: {text}");
 }
 
 #[test]

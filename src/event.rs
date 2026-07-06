@@ -33,6 +33,8 @@ pub fn handle_key(app: &mut App, key: KeyEvent) {
         Mode::NoteSortPicker(_) => note_sort_picker_key(app, key),
         Mode::NoteMovePicker(_) => note_move_picker_key(app, key),
         Mode::NoteCopyMenu(_) => note_copy_menu_key(app, key),
+        Mode::NoteView(_) => note_view_key(app, key),
+        Mode::NoteLinkPicker(_) => note_link_picker_key(app, key),
         Mode::Settings => settings_key(app, key),
         Mode::Help => app.close_overlay(),
         Mode::Normal | Mode::Detail => nav_key(app, key),
@@ -75,6 +77,31 @@ fn note_move_picker_key(app: &mut App, key: KeyEvent) {
         KeyCode::Char('k') | KeyCode::Up => app.note_move_picker_move(-1),
         KeyCode::Enter => app.note_move_picker_confirm(),
         KeyCode::Esc | KeyCode::Char('q') => app.note_move_picker_cancel(),
+        _ => {}
+    }
+}
+
+fn note_view_key(app: &mut App, key: KeyEvent) {
+    match key.code {
+        KeyCode::Char('j') | KeyCode::Down => app.note_view_scroll(1),
+        KeyCode::Char('k') | KeyCode::Up => app.note_view_scroll(-1),
+        KeyCode::PageDown | KeyCode::Char(' ') => app.note_view_scroll(10),
+        KeyCode::PageUp => app.note_view_scroll(-10),
+        // Tab / e / Enter drop into the raw editor.
+        KeyCode::Tab | KeyCode::Char('e') | KeyCode::Enter => app.note_view_edit(),
+        // f follows a link (returning to the read view on cancel).
+        KeyCode::Char('f') => app.start_note_link_picker(true),
+        KeyCode::Esc | KeyCode::Char('q') => app.close_overlay(),
+        _ => {}
+    }
+}
+
+fn note_link_picker_key(app: &mut App, key: KeyEvent) {
+    match key.code {
+        KeyCode::Char('j') | KeyCode::Down => app.note_link_picker_move(1),
+        KeyCode::Char('k') | KeyCode::Up => app.note_link_picker_move(-1),
+        KeyCode::Enter => app.note_link_picker_confirm(),
+        KeyCode::Esc | KeyCode::Char('q') => app.note_link_picker_cancel(),
         _ => {}
     }
 }
@@ -321,6 +348,8 @@ fn input_key(app: &mut App, key: KeyEvent) {
         Commit,
     }
     let mut step = Step::None;
+    // Tab in the note editor saves and flips to the rendered read view.
+    let mut to_view = false;
 
     if let Mode::Input(input) = &mut app.mode {
         match key.code {
@@ -328,6 +357,10 @@ fn input_key(app: &mut App, key: KeyEvent) {
             // treats Esc as cancel/discard.
             KeyCode::Esc if input.field == InputField::NoteBody => step = Step::Commit,
             KeyCode::Esc => step = Step::Cancel,
+            KeyCode::Tab if input.field == InputField::NoteBody => {
+                step = Step::Commit;
+                to_view = true;
+            }
             KeyCode::Enter if input.multiline => input.insert('\n'),
             KeyCode::Enter => step = Step::Commit,
             KeyCode::Char('s') if input.multiline && ctrl => step = Step::Commit,
@@ -367,6 +400,9 @@ fn input_key(app: &mut App, key: KeyEvent) {
                 let buffer = input.buffer.clone();
                 app.mode = return_mode(field, input.return_detail);
                 apply_input(app, field, buffer);
+            }
+            if to_view {
+                app.open_note_view();
             }
         }
     }
@@ -516,6 +552,26 @@ pub fn handle_mouse(app: &mut App, m: MouseEvent) {
                 }
                 _ => {}
             }
+        }
+        return;
+    }
+    // The rendered read view scrolls with the wheel and follows clicked links.
+    if matches!(app.mode, Mode::NoteView(_)) {
+        match m.kind {
+            MouseEventKind::ScrollDown => app.note_view_scroll(3),
+            MouseEventKind::ScrollUp => app.note_view_scroll(-3),
+            MouseEventKind::Down(MouseButton::Left) => {
+                let target = app
+                    .clickables
+                    .note_view_links
+                    .iter()
+                    .find(|(r, _)| hit(*r, m.column, m.row))
+                    .map(|(_, t)| *t);
+                if let Some(r) = target {
+                    app.jump_to_note(r);
+                }
+            }
+            _ => {}
         }
         return;
     }

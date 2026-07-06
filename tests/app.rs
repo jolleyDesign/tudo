@@ -1994,6 +1994,70 @@ fn note_copy_payload_builds_body_title_and_markdown() {
 }
 
 #[test]
+fn note_links_resolve_and_backlink() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app_in(dir.path());
+    app.switch_tab(Tab::Notes);
+    app.add_notebook("N".to_string());
+    app.add_note("Target".to_string());
+    app.add_note("Source".to_string());
+    app.set_current_note_body("see [[Target]]".to_string());
+
+    // Resolution is case-insensitive.
+    let target = app.resolve_note_link("target").unwrap();
+    assert_eq!(
+        app.notebooks[target.notebook].notes[target.note].title,
+        "Target"
+    );
+
+    // Target's backlinks include Source.
+    let back = app.note_backlinks("Target", None);
+    assert_eq!(back.len(), 1);
+    assert_eq!(
+        app.notebooks[back[0].notebook].notes[back[0].note].title,
+        "Source"
+    );
+}
+
+#[test]
+fn following_a_link_jumps_and_opens_the_read_view() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app_in(dir.path());
+    app.switch_tab(Tab::Notes);
+    app.add_notebook("N".to_string());
+    app.add_note("Target".to_string());
+    app.add_note("Source".to_string());
+    app.set_current_note_body("[[Target]]".to_string());
+
+    app.start_note_link_picker(false);
+    assert!(matches!(app.mode, Mode::NoteLinkPicker(_)));
+    app.note_link_picker_confirm();
+
+    assert!(matches!(app.mode, Mode::NoteView(_)), "landed in read view");
+    assert_eq!(app.current_note().unwrap().title, "Target");
+}
+
+#[test]
+fn tab_toggles_between_editor_and_read_view() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app_in(dir.path());
+    app.switch_tab(Tab::Notes);
+    app.add_notebook("N".to_string());
+    app.add_note("N1".to_string());
+    app.note_focus_notes();
+
+    // Enter opens the raw editor.
+    event::handle_key(&mut app, KeyEvent::from(KeyCode::Enter));
+    assert!(matches!(app.mode, Mode::Input(_)));
+    // Tab flips to the rendered read view (saving on the way).
+    event::handle_key(&mut app, KeyEvent::from(KeyCode::Tab));
+    assert!(matches!(app.mode, Mode::NoteView(_)));
+    // Tab flips back to the editor.
+    event::handle_key(&mut app, KeyEvent::from(KeyCode::Tab));
+    assert!(matches!(app.mode, Mode::Input(_)));
+}
+
+#[test]
 fn deleting_a_notebook_removes_its_folder() {
     let dir = tempfile::tempdir().unwrap();
     let mut app = app_in(dir.path());
