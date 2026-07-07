@@ -2,15 +2,25 @@
 
 use std::path::PathBuf;
 
-use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use tudo::app::{App, CopyWhat, Focus, InputField, Mode, SidebarRow, StatusFilter, View};
+use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
+use tudo::app::{
+    App, CopyWhat, Focus, InputField, Mode, NoteCopyWhat, NoteSidebarRow, NoteView, NotesFocus,
+    SidebarRow, StatusFilter, Tab, View,
+};
 use tudo::keybind::{Keymap, Overrides};
-use tudo::model::{Priority, Sort, SortDir};
+use tudo::model::{NoteSort, Priority, Sort, SortDir};
 use tudo::theme::ThemeKind;
 use tudo::{config, event, storage};
 
 fn app_in(dir: &std::path::Path) -> App {
     App::new(Some(dir.to_path_buf())).unwrap()
+}
+
+/// Type a string one character at a time through the real key handler.
+fn type_str(app: &mut App, s: &str) {
+    for c in s.chars() {
+        event::handle_key(app, KeyEvent::from(KeyCode::Char(c)));
+    }
 }
 
 #[test]
@@ -348,6 +358,60 @@ fn reorder_and_send_task_within_list_persists() {
         .map(|t| t.title.clone())
         .collect();
     assert_eq!(order, ["b", "a", "c"]);
+}
+
+#[test]
+fn send_task_keeps_selection_and_stays_in_group_under_sink() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app_in(dir.path());
+    app.add_list("L".to_string());
+    app.add_task("a".to_string());
+    app.add_task("b".to_string());
+    app.add_task("c".to_string());
+    app.add_task("d".to_string());
+
+    // Display order in the tasks pane.
+    let visible_titles = |app: &App| -> Vec<String> {
+        let list = app.current_list().unwrap();
+        app.visible_task_indices()
+            .iter()
+            .map(|&i| list.tasks[i].title.clone())
+            .collect()
+    };
+
+    // Mark "b" and "d" done, then sink completed tasks: display is [a, c, b, d]
+    // (incomplete first, done floated to the bottom).
+    app.select_task_visible(1);
+    app.toggle_current_done();
+    app.select_task_visible(3);
+    app.toggle_current_done();
+    app.set_completed_to_bottom(true);
+    assert_eq!(visible_titles(&app), ["a", "c", "b", "d"]);
+
+    // Send incomplete "a" (top of its group) to the bottom. It can only reach
+    // the bottom of the incomplete group — the done tasks re-sink below it — so
+    // it lands last among incompletes, and the cursor follows it there.
+    app.select_task_visible(0);
+    app.send_task(false);
+    assert_eq!(visible_titles(&app), ["c", "a", "b", "d"]);
+    assert_eq!(app.current_task().unwrap().title, "a");
+
+    // Send done "b" (top of the done group) to the bottom of that group: after
+    // "d". Cursor stays on the moved task.
+    app.select_task_visible(2);
+    app.send_task(false);
+    assert_eq!(visible_titles(&app), ["c", "a", "d", "b"]);
+    assert_eq!(app.current_task().unwrap().title, "b");
+
+    // Hoisting done "b" to the top of its group puts it first among done tasks
+    // (still below every incomplete task), cursor following.
+    app.send_task(true);
+    assert_eq!(visible_titles(&app), ["c", "a", "b", "d"]);
+    assert_eq!(app.current_task().unwrap().title, "b");
+
+    // Turning sink off reveals the underlying stored order is intact and valid.
+    app.set_completed_to_bottom(false);
+    assert_eq!(visible_titles(&app), ["c", "a", "b", "d"]);
 }
 
 #[test]
@@ -1361,7 +1425,121 @@ fn clearing_the_last_use_of_a_tag_drops_it_and_reselects_safely() {
 }
 
 #[test]
-fn sidebar_navigation_flows_from_lists_into_tags() {
+fn sidebar_jk_round_robins_within_each_pane() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app_in(dir.path());
+    app.add_list("Alpha".to_string());
+    app.add_list("Beta".to_string());
+    app.select_list_index(0);
+    app.add_task("a #x".to_string());
+    app.select_list_index(1);
+    app.add_task("b #y".to_string());
+    assert_eq!(app.all_tags().len(), 2);
+
+    // `j` off the last list wraps back to the first list rather than spilling
+    // into the tag pane; `k` off the first list wraps to the last.
+    app.select_list_index(1);
+    app.move_selection(1);
+    assert_eq!(app.selected_list_index(), Some(0));
+    app.move_selection(-1);
+    assert_eq!(app.selected_list_index(), Some(1));
+
+    // The tags pane round-robins on its own, too.
+    let tags = app.all_tags();
+    let (first, last) = (tags[0].clone(), tags[tags.len() - 1].clone());
+    app.select_sidebar_row(tag_row(&app, &last));
+    app.move_selection(1);
+    assert_eq!(app.current_view(), Some(View::Tag(first.clone())));
+    app.move_selection(-1);
+    assert_eq!(app.current_view(), Some(View::Tag(last)));
+}
+
+#[test]
+fn toggle_sidebar_pane_flips_between_lists_and_tags() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app_in(dir.path());
+    app.add_list("Alpha".to_string());
+    app.add_list("Beta".to_string());
+    app.select_list_index(1);
+    app.add_task("a #x".to_string());
+
+    // From a list the toggle jumps straight to the tags, no matter how many
+    // lists sit in between. Drive it through the real key path (`\`) so the
+    // keymap lookup and dispatch are exercised, not just the method.
+    app.select_list_index(1);
+    event::handle_key(&mut app, KeyEvent::from(KeyCode::Char('\\')));
+    assert_eq!(app.current_view(), Some(View::Tag("x".to_string())));
+    // ...and back onto the list you were on.
+    event::handle_key(&mut app, KeyEvent::from(KeyCode::Char('\\')));
+    assert_eq!(app.selected_list_index(), Some(1));
+
+    // From the tasks pane it first steps back into the sidebar.
+    app.focus_tasks();
+    assert_eq!(app.focus, Focus::Tasks);
+    app.toggle_sidebar_pane();
+    assert_eq!(app.focus, Focus::Lists);
+
+    // With no tags at all, crossing into the (absent) tag pane is a no-op.
+    app.set_current_tags("");
+    assert!(app.all_tags().is_empty());
+    app.toggle_sidebar_pane();
+    assert_eq!(app.selected_list_index(), Some(1));
+}
+
+#[test]
+fn task_list_jk_round_robins_but_wheel_clamps() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app_in(dir.path());
+    app.add_list("L".to_string());
+    app.add_task("one".to_string());
+    app.add_task("two".to_string());
+    app.add_task("three".to_string());
+
+    // `k` off the first task wraps to the last; `j` off the last wraps to the
+    // first.
+    app.select_task_visible(0);
+    app.move_selection(-1);
+    assert_eq!(app.selected_visible_task(), 2);
+    app.move_selection(1);
+    assert_eq!(app.selected_visible_task(), 0);
+
+    // The wheel clamps at the ends instead of wrapping.
+    app.select_task_visible(2);
+    app.scroll_selection(1);
+    assert_eq!(app.selected_visible_task(), 2);
+    app.select_task_visible(0);
+    app.scroll_selection(-1);
+    assert_eq!(app.selected_visible_task(), 0);
+}
+
+#[test]
+fn note_list_jk_round_robins_but_wheel_clamps() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app_in(dir.path());
+    app.add_notebook("N".to_string());
+    app.add_note("one".to_string());
+    app.add_note("two".to_string());
+    app.add_note("three".to_string());
+    app.note_focus_notes();
+
+    // `k` off the first note wraps to the last; `j` off the last wraps back.
+    app.select_note_visible(0);
+    app.note_move_selection(-1);
+    assert_eq!(app.selected_visible_note(), 2);
+    app.note_move_selection(1);
+    assert_eq!(app.selected_visible_note(), 0);
+
+    // The wheel clamps at the ends.
+    app.select_note_visible(2);
+    app.note_scroll_selection(1);
+    assert_eq!(app.selected_visible_note(), 2);
+    app.select_note_visible(0);
+    app.note_scroll_selection(-1);
+    assert_eq!(app.selected_visible_note(), 0);
+}
+
+#[test]
+fn scroll_wheel_stops_at_the_lists_tags_boundary() {
     let dir = tempfile::tempdir().unwrap();
     let mut app = app_in(dir.path());
     app.add_list("Alpha".to_string());
@@ -1369,13 +1547,17 @@ fn sidebar_navigation_flows_from_lists_into_tags() {
     app.select_list_index(0);
     app.add_task("a #x".to_string());
 
-    // The single cursor runs off the last list straight onto the first tag.
+    // Unlike `j`/`k`, scrolling to the end of the lists stays on the last list
+    // instead of spilling into the tag pane.
     app.select_list_index(1);
-    app.move_selection(1);
-    assert_eq!(app.current_view(), Some(View::Tag("x".to_string())));
-    // ...and back up onto the list.
-    app.move_selection(-1);
+    app.scroll_selection(1);
     assert_eq!(app.selected_list_index(), Some(1));
+    assert_eq!(app.current_view(), Some(View::List(1)));
+
+    // From within the tags, the wheel likewise stays on the tags.
+    app.select_sidebar_row(tag_row(&app, "x"));
+    app.scroll_selection(-1);
+    assert_eq!(app.current_view(), Some(View::Tag("x".to_string())));
 }
 
 #[test]
@@ -1528,4 +1710,537 @@ fn archiving_a_tagged_task_removes_the_tag_from_the_sidebar() {
             .iter()
             .any(|r| matches!(r, SidebarRow::Tag(_)))
     );
+}
+
+// --- Notes tab --------------------------------------------------------------
+
+#[test]
+fn number_keys_switch_tabs() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app_in(dir.path());
+    assert_eq!(app.active_tab, Tab::Tasks);
+
+    event::handle_key(&mut app, KeyEvent::from(KeyCode::Char('2')));
+    assert_eq!(app.active_tab, Tab::Notes);
+    event::handle_key(&mut app, KeyEvent::from(KeyCode::Char('1')));
+    assert_eq!(app.active_tab, Tab::Tasks);
+}
+
+#[test]
+fn notebook_and_note_crud_persists_to_disk() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app_in(dir.path());
+    app.switch_tab(Tab::Notes);
+
+    app.add_notebook("Journal".to_string());
+    assert_eq!(app.notebooks.len(), 1);
+    assert_eq!(app.current_notebook().unwrap().name, "Journal");
+
+    app.add_note("First entry".to_string());
+    assert_eq!(app.current_note().unwrap().title, "First entry");
+    app.set_current_note_body("Body text here.".to_string());
+    app.set_current_note_tags("diary, morning");
+    assert_eq!(app.current_note().unwrap().tags, vec!["diary", "morning"]);
+
+    // Reload from disk to confirm the .md file round-trips.
+    let reloaded = app_in(dir.path());
+    assert_eq!(reloaded.notebooks.len(), 1);
+    assert_eq!(reloaded.notebooks[0].notes.len(), 1);
+    let note = &reloaded.notebooks[0].notes[0];
+    assert_eq!(note.title, "First entry");
+    assert_eq!(note.body, "Body text here.");
+    assert_eq!(note.tags, vec!["diary", "morning"]);
+}
+
+#[test]
+fn note_search_filters_by_title_body_and_tags() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app_in(dir.path());
+    app.switch_tab(Tab::Notes);
+    app.add_notebook("N".to_string());
+    app.add_note("Groceries".to_string());
+    app.add_note("Meeting".to_string());
+    app.set_current_note_body("discuss the roadmap".to_string());
+
+    app.set_note_search("road".to_string());
+    let visible = app.visible_note_refs();
+    assert_eq!(visible.len(), 1);
+    assert_eq!(app.current_note().unwrap().title, "Meeting");
+
+    app.clear_note_filter();
+    assert_eq!(app.visible_note_refs().len(), 2);
+}
+
+#[test]
+fn note_tags_form_a_cross_notebook_view() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app_in(dir.path());
+    app.switch_tab(Tab::Notes);
+
+    app.add_notebook("A".to_string());
+    app.add_note("a1".to_string());
+    app.set_current_note_tags("idea");
+    app.add_notebook("B".to_string());
+    app.add_note("b1".to_string());
+    app.set_current_note_tags("idea");
+
+    assert_eq!(app.all_note_tags(), vec!["idea".to_string()]);
+    // Selecting the tag row surfaces notes from both notebooks.
+    let tag_row = app.note_sidebar_rows().len() - 1;
+    app.select_note_sidebar_row(tag_row);
+    assert_eq!(
+        app.current_note_view(),
+        Some(NoteView::Tag("idea".to_string()))
+    );
+    assert_eq!(app.visible_note_refs().len(), 2);
+}
+
+#[test]
+fn pinned_notes_float_to_the_top() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app_in(dir.path());
+    app.switch_tab(Tab::Notes);
+    app.add_notebook("N".to_string());
+    app.add_note("first".to_string());
+    app.add_note("second".to_string());
+
+    // Pin "second"; it should jump to the top of the visible order.
+    app.note_focus_notes();
+    // The most recently added note is selected; pin it.
+    let before = app.current_note().unwrap().title.clone();
+    app.toggle_current_note_pin();
+    let top = &app.notebooks[0].notes[app.visible_note_refs()[0].note];
+    assert!(top.pinned);
+    assert_eq!(top.title, before);
+    // The pin survives a reload.
+    let reloaded = app_in(dir.path());
+    assert!(reloaded.notebooks[0].notes.iter().any(|n| n.pinned));
+}
+
+#[test]
+fn notes_reorder_under_manual_sort() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app_in(dir.path());
+    app.switch_tab(Tab::Notes);
+    app.add_notebook("N".to_string());
+    app.add_note("alpha".to_string());
+    app.add_note("beta".to_string());
+    app.add_note("gamma".to_string());
+    app.note_focus_notes();
+
+    // Titles in current manual (insertion) order.
+    let titles = |a: &App| {
+        a.visible_note_refs()
+            .iter()
+            .map(|r| a.notebooks[r.notebook].notes[r.note].title.clone())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(titles(&app), vec!["alpha", "beta", "gamma"]);
+
+    // Select the top note and send it to the bottom.
+    app.note_state.select(Some(0));
+    app.send_note(false);
+    assert_eq!(titles(&app), vec!["beta", "gamma", "alpha"]);
+
+    // Order survives a reload.
+    let reloaded = app_in(dir.path());
+    assert_eq!(titles(&reloaded), vec!["beta", "gamma", "alpha"]);
+}
+
+#[test]
+fn note_sort_alphabetical_orders_by_title() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app_in(dir.path());
+    app.switch_tab(Tab::Notes);
+    app.add_notebook("N".to_string());
+    app.add_note("Charlie".to_string());
+    app.add_note("Alpha".to_string());
+    app.add_note("Bravo".to_string());
+
+    app.set_note_sort(NoteSort::Alphabetical);
+    let titles: Vec<_> = app
+        .visible_note_refs()
+        .iter()
+        .map(|r| app.notebooks[r.notebook].notes[r.note].title.clone())
+        .collect();
+    assert_eq!(titles, vec!["Alpha", "Bravo", "Charlie"]);
+}
+
+#[test]
+fn keys_drive_notes_creation_end_to_end() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app_in(dir.path());
+
+    // 2 -> Notes tab.
+    event::handle_key(&mut app, KeyEvent::from(KeyCode::Char('2')));
+    assert_eq!(app.active_tab, Tab::Notes);
+
+    // A -> add notebook, type name, Enter.
+    event::handle_key(&mut app, KeyEvent::from(KeyCode::Char('A')));
+    assert!(matches!(app.mode, Mode::Input(_)));
+    type_str(&mut app, "Work");
+    event::handle_key(&mut app, KeyEvent::from(KeyCode::Enter));
+    assert_eq!(app.notebooks.len(), 1);
+
+    // a -> add note, type title, Enter.
+    event::handle_key(&mut app, KeyEvent::from(KeyCode::Char('a')));
+    type_str(&mut app, "Hello");
+    event::handle_key(&mut app, KeyEvent::from(KeyCode::Enter));
+    assert_eq!(app.current_note().unwrap().title, "Hello");
+
+    // n -> edit body, type, Ctrl+S saves.
+    event::handle_key(&mut app, KeyEvent::from(KeyCode::Char('n')));
+    assert!(matches!(app.mode, Mode::Input(_)));
+    type_str(&mut app, "world");
+    event::handle_key(
+        &mut app,
+        KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL),
+    );
+    assert_eq!(app.current_note().unwrap().body, "world");
+
+    // * -> pin the note.
+    event::handle_key(&mut app, KeyEvent::from(KeyCode::Char('*')));
+    assert!(app.current_note().unwrap().pinned);
+
+    // Everything survives a reload.
+    let reloaded = app_in(dir.path());
+    let note = &reloaded.notebooks[0].notes[0];
+    assert_eq!(note.title, "Hello");
+    assert_eq!(note.body, "world");
+    assert!(note.pinned);
+}
+
+#[test]
+fn esc_autosaves_the_note_body() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app_in(dir.path());
+    event::handle_key(&mut app, KeyEvent::from(KeyCode::Char('2')));
+    event::handle_key(&mut app, KeyEvent::from(KeyCode::Char('A')));
+    type_str(&mut app, "NB");
+    event::handle_key(&mut app, KeyEvent::from(KeyCode::Enter));
+    event::handle_key(&mut app, KeyEvent::from(KeyCode::Char('a')));
+    type_str(&mut app, "Note");
+    event::handle_key(&mut app, KeyEvent::from(KeyCode::Enter));
+
+    // Enter opens the full-screen body editor; Esc saves and closes.
+    event::handle_key(&mut app, KeyEvent::from(KeyCode::Enter));
+    assert!(matches!(app.mode, Mode::Input(_)));
+    type_str(&mut app, "auto saved body");
+    event::handle_key(&mut app, KeyEvent::from(KeyCode::Esc));
+    assert!(matches!(app.mode, Mode::Normal), "editor should close");
+    assert_eq!(app.current_note().unwrap().body, "auto saved body");
+
+    // And it's on disk.
+    let reloaded = app_in(dir.path());
+    assert_eq!(reloaded.notebooks[0].notes[0].body, "auto saved body");
+}
+
+#[test]
+fn creating_a_note_parses_hash_tags() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app_in(dir.path());
+    app.switch_tab(Tab::Notes);
+    app.add_notebook("N".to_string());
+    app.add_note("Roadmap sync #work #planning".to_string());
+
+    let note = app.current_note().unwrap();
+    assert_eq!(note.title, "Roadmap sync");
+    assert_eq!(note.tags, vec!["work", "planning"]);
+    // The tags show up in the sidebar tag pane.
+    assert_eq!(
+        app.all_note_tags(),
+        vec!["planning".to_string(), "work".to_string()]
+    );
+}
+
+#[test]
+fn archiving_a_note_moves_it_to_the_archived_notebook() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app_in(dir.path());
+    app.switch_tab(Tab::Notes);
+    app.add_notebook("Work".to_string());
+    app.add_note("keeper".to_string());
+    app.note_focus_notes();
+
+    app.archive_current_note();
+
+    // It left Work and landed in a new Archived notebook pinned to the bottom.
+    let work = app.notebooks.iter().find(|n| n.name == "Work").unwrap();
+    assert!(work.notes.is_empty());
+    let archived = app.notebooks.iter().find(|n| n.is_archive()).unwrap();
+    assert_eq!(archived.notes.len(), 1);
+    assert_eq!(archived.notes[0].title, "keeper");
+    assert!(
+        app.notebooks.last().unwrap().is_archive(),
+        "archive pinned bottom"
+    );
+
+    // Survives a reload.
+    let reloaded = app_in(dir.path());
+    assert!(
+        reloaded
+            .notebooks
+            .iter()
+            .any(|n| n.is_archive() && n.notes.len() == 1)
+    );
+    assert!(reloaded.notebooks.last().unwrap().is_archive());
+}
+
+#[test]
+fn archived_note_tags_leave_the_sidebar() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app_in(dir.path());
+    app.switch_tab(Tab::Notes);
+    app.add_notebook("N".to_string());
+    app.add_note("t #x".to_string());
+    assert_eq!(app.all_note_tags(), vec!["x".to_string()]);
+
+    app.note_focus_notes();
+    app.archive_current_note();
+    // Archived notes are excluded from the tag scope, so the tag disappears.
+    assert!(app.all_note_tags().is_empty());
+}
+
+#[test]
+fn moving_a_note_out_of_the_archive_unarchives_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app_in(dir.path());
+    app.switch_tab(Tab::Notes);
+    app.add_notebook("Inbox".to_string());
+    app.add_note("resurface me".to_string());
+    app.note_focus_notes();
+    app.archive_current_note();
+
+    // Select the Archived notebook and its note.
+    let archive_row = app
+        .note_sidebar_rows()
+        .iter()
+        .position(|r| matches!(r, NoteSidebarRow::Notebook(i) if app.notebooks[*i].is_archive()))
+        .unwrap();
+    app.select_note_sidebar_row(archive_row);
+    app.note_focus_notes();
+
+    app.start_move_note();
+    assert!(matches!(app.mode, Mode::NoteMovePicker(_)));
+    app.note_move_picker_confirm(); // the only target is Inbox
+
+    let inbox = app.notebooks.iter().find(|n| n.name == "Inbox").unwrap();
+    assert_eq!(inbox.notes.len(), 1, "note is back in Inbox");
+    let archived = app.notebooks.iter().find(|n| n.is_archive()).unwrap();
+    assert!(archived.notes.is_empty(), "archive is empty again");
+}
+
+#[test]
+fn archived_notebook_cannot_be_renamed_or_deleted() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app_in(dir.path());
+    app.switch_tab(Tab::Notes);
+    app.add_notebook("N".to_string());
+    app.add_note("x".to_string());
+    app.note_focus_notes();
+    app.archive_current_note();
+
+    let archive_row = app
+        .note_sidebar_rows()
+        .iter()
+        .position(|r| matches!(r, NoteSidebarRow::Notebook(i) if app.notebooks[*i].is_archive()))
+        .unwrap();
+    app.select_note_sidebar_row(archive_row); // selects it, focuses notebooks pane
+
+    app.start_rename_notebook();
+    assert!(matches!(app.mode, Mode::Normal), "rename refused");
+    app.start_delete_note();
+    assert!(matches!(app.mode, Mode::Normal), "delete refused");
+}
+
+#[test]
+fn multiline_editor_supports_up_and_delete() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app_in(dir.path());
+    app.switch_tab(Tab::Notes);
+    app.add_notebook("N".to_string());
+    app.add_note("t".to_string());
+    app.note_focus_notes();
+    app.start_edit_note_body();
+
+    // Type "abc", newline, "de" -> cursor at end of the second line.
+    type_str(&mut app, "abc");
+    event::handle_key(&mut app, KeyEvent::from(KeyCode::Enter));
+    type_str(&mut app, "de");
+
+    // Up keeps the column (2), landing between 'b' and 'c' on the first line.
+    event::handle_key(&mut app, KeyEvent::from(KeyCode::Up));
+    let Mode::Input(input) = &app.mode else {
+        panic!("not editing");
+    };
+    assert_eq!(input.cursor, 2);
+
+    // Delete removes the character under the cursor ('c').
+    event::handle_key(&mut app, KeyEvent::from(KeyCode::Delete));
+    let Mode::Input(input) = &app.mode else {
+        panic!("not editing");
+    };
+    assert_eq!(input.buffer, "ab\nde");
+}
+
+#[test]
+fn scroll_wheel_moves_the_cursor_in_the_note_editor() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app_in(dir.path());
+    app.switch_tab(Tab::Notes);
+    app.add_notebook("N".to_string());
+    app.add_note("t".to_string());
+    app.set_current_note_body("l0\nl1\nl2\nl3\nl4\nl5".to_string());
+    app.note_focus_notes();
+    app.note_activate(); // full-screen editor, cursor at the end
+
+    let before = match &app.mode {
+        Mode::Input(i) => i.cursor,
+        _ => panic!("not editing"),
+    };
+    let scroll = |kind| MouseEvent {
+        kind,
+        column: 5,
+        row: 5,
+        modifiers: KeyModifiers::NONE,
+    };
+    event::handle_mouse(&mut app, scroll(MouseEventKind::ScrollUp));
+    let after = match &app.mode {
+        Mode::Input(i) => i.cursor,
+        _ => panic!("not editing"),
+    };
+    assert!(after < before, "scrolling up moved the cursor up");
+}
+
+#[test]
+fn reordering_notebooks_persists() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app_in(dir.path());
+    app.switch_tab(Tab::Notes);
+    app.add_notebook("Alpha".to_string());
+    app.add_notebook("Beta".to_string());
+    app.add_notebook("Gamma".to_string());
+
+    let names = |a: &App| {
+        a.notebooks
+            .iter()
+            .map(|n| n.name.clone())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(names(&app), vec!["Alpha", "Beta", "Gamma"]);
+
+    // Focus the notebooks pane, select Alpha, and nudge it down twice via `J`.
+    app.note_focus_notebooks();
+    app.notebook_state.select(Some(0));
+    event::handle_key(&mut app, KeyEvent::from(KeyCode::Char('J')));
+    assert_eq!(names(&app), vec!["Beta", "Alpha", "Gamma"]);
+    event::handle_key(&mut app, KeyEvent::from(KeyCode::Char('J')));
+    assert_eq!(names(&app), vec!["Beta", "Gamma", "Alpha"]);
+
+    // The manual order survives a reload.
+    let reloaded = app_in(dir.path());
+    assert_eq!(names(&reloaded), vec!["Beta", "Gamma", "Alpha"]);
+}
+
+#[test]
+fn note_copy_payload_builds_body_title_and_markdown() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app_in(dir.path());
+    app.switch_tab(Tab::Notes);
+    app.add_notebook("N".to_string());
+    app.add_note("Title here #tag".to_string());
+    app.set_current_note_body("body line".to_string());
+
+    assert_eq!(
+        app.note_copy_payload(NoteCopyWhat::Title).unwrap(),
+        "Title here"
+    );
+    assert_eq!(
+        app.note_copy_payload(NoteCopyWhat::Body).unwrap(),
+        "body line"
+    );
+    let md = app.note_copy_payload(NoteCopyWhat::Markdown).unwrap();
+    assert!(md.contains("title: Title here"), "frontmatter: {md}");
+    assert!(md.contains("tags: [tag]"), "tags: {md}");
+    assert!(md.contains("body line"), "body: {md}");
+}
+
+#[test]
+fn note_links_resolve_and_backlink() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app_in(dir.path());
+    app.switch_tab(Tab::Notes);
+    app.add_notebook("N".to_string());
+    app.add_note("Target".to_string());
+    app.add_note("Source".to_string());
+    app.set_current_note_body("see [[Target]]".to_string());
+
+    // Resolution is case-insensitive.
+    let target = app.resolve_note_link("target").unwrap();
+    assert_eq!(
+        app.notebooks[target.notebook].notes[target.note].title,
+        "Target"
+    );
+
+    // Target's backlinks include Source.
+    let back = app.note_backlinks("Target", None);
+    assert_eq!(back.len(), 1);
+    assert_eq!(
+        app.notebooks[back[0].notebook].notes[back[0].note].title,
+        "Source"
+    );
+}
+
+#[test]
+fn following_a_link_jumps_and_opens_the_read_view() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app_in(dir.path());
+    app.switch_tab(Tab::Notes);
+    app.add_notebook("N".to_string());
+    app.add_note("Target".to_string());
+    app.add_note("Source".to_string());
+    app.set_current_note_body("[[Target]]".to_string());
+
+    app.start_note_link_picker(false);
+    assert!(matches!(app.mode, Mode::NoteLinkPicker(_)));
+    app.note_link_picker_confirm();
+
+    assert!(matches!(app.mode, Mode::NoteView(_)), "landed in read view");
+    assert_eq!(app.current_note().unwrap().title, "Target");
+}
+
+#[test]
+fn tab_toggles_between_editor_and_read_view() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app_in(dir.path());
+    app.switch_tab(Tab::Notes);
+    app.add_notebook("N".to_string());
+    app.add_note("N1".to_string());
+    app.note_focus_notes();
+
+    // Enter opens the raw editor.
+    event::handle_key(&mut app, KeyEvent::from(KeyCode::Enter));
+    assert!(matches!(app.mode, Mode::Input(_)));
+    // Tab flips to the rendered read view (saving on the way).
+    event::handle_key(&mut app, KeyEvent::from(KeyCode::Tab));
+    assert!(matches!(app.mode, Mode::NoteView(_)));
+    // Tab flips back to the editor.
+    event::handle_key(&mut app, KeyEvent::from(KeyCode::Tab));
+    assert!(matches!(app.mode, Mode::Input(_)));
+}
+
+#[test]
+fn deleting_a_notebook_removes_its_folder() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app_in(dir.path());
+    app.switch_tab(Tab::Notes);
+    app.add_notebook("Temp".to_string());
+    app.add_note("note".to_string());
+    assert!(dir.path().join("notes").join("Temp").exists());
+
+    app.note_focus_notebooks();
+    app.delete_current_notebook();
+    assert!(app.notebooks.is_empty());
+    assert!(!dir.path().join("notes").join("Temp").exists());
+    assert_eq!(app.notes_focus, NotesFocus::Notebooks);
 }

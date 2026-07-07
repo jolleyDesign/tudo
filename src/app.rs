@@ -7,7 +7,7 @@
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use chrono::Local;
+use chrono::{Local, Utc};
 use ratatui::layout::Rect;
 use ratatui::widgets::ListState;
 
@@ -16,7 +16,7 @@ pub const STATUS_TTL: Duration = Duration::from_secs(4);
 
 use crate::config::{self, Config};
 use crate::keybind::Keymap;
-use crate::model::{self, List, Sort, SortDir, Subtask, Task};
+use crate::model::{self, List, Note, NoteSort, Notebook, Sort, SortDir, Subtask, Task};
 use crate::storage;
 use crate::theme::{self, ThemeKind};
 
@@ -27,6 +27,70 @@ use crate::theme::{self, ThemeKind};
 pub enum Focus {
     Lists,
     Tasks,
+}
+
+/// The top-level workspace shown in the header tab strip. Session-only, like the
+/// sort/filter — every run starts on `Tasks`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Tab {
+    Tasks,
+    Notes,
+}
+
+impl Tab {
+    /// The tabs in the order they appear (and are numbered) in the header.
+    pub fn all() -> [Tab; 2] {
+        [Tab::Tasks, Tab::Notes]
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Tab::Tasks => "Tasks",
+            Tab::Notes => "Notes",
+        }
+    }
+}
+
+/// Which pane has focus on the Notes tab (parallel to [`Focus`] on the Tasks
+/// tab). The notebooks pane and the note-tags pane share one sidebar cursor, so
+/// `Notebooks` covers both — which is active is derived from the selected row.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NotesFocus {
+    Notebooks,
+    Notes,
+}
+
+/// A reference to a note by its home notebook and position within it, so
+/// mutations land on the right note even in the cross-notebook tag view.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NoteRef {
+    /// Index into [`App::notebooks`].
+    pub notebook: usize,
+    /// Index into that notebook's `notes`.
+    pub note: usize,
+}
+
+/// One entry in the Notes sidebar's flat selection order: every notebook first
+/// (so `Notebook(i)` sits at index `i`), then one `Tag` per distinct note tag.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NoteSidebarRow {
+    Notebook(usize),
+    Tag(String),
+}
+
+/// What the note list is showing, derived from the selected Notes-sidebar row.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NoteView {
+    Notebook(usize),
+    Tag(String),
+}
+
+/// A stable identity for a selected Notes-sidebar row, so the selection can be
+/// re-found after an edit reshuffles the rows.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum NoteEntryKey {
+    Notebook(String),
+    Tag(String),
 }
 
 /// A reference to a task by its home list and position within that list. Used
@@ -66,6 +130,15 @@ enum EntryKey {
     Tag(String),
 }
 
+/// Step `cur` by `delta` within the inclusive range `[lo, hi]`, wrapping around
+/// at either end (round-robin) so moving off the bottom lands on the top and
+/// vice versa. Assumes `lo <= hi` and `cur` already within the range.
+fn wrap_index(cur: usize, delta: isize, lo: usize, hi: usize) -> usize {
+    let span = (hi - lo + 1) as isize;
+    let rel = (cur as isize - lo as isize + delta).rem_euclid(span);
+    (lo as isize + rel) as usize
+}
+
 /// Which text field an [`InputState`] is collecting.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InputField {
@@ -81,6 +154,14 @@ pub enum InputField {
     EditSubtask,
     Search,
     DataDir,
+    // Notes tab.
+    NewNotebook,
+    RenameNotebook,
+    NewNote,
+    EditNote,
+    NoteBody,
+    NoteTags,
+    NoteSearch,
 }
 
 /// State for the modal text-entry overlay.
@@ -156,6 +237,58 @@ impl InputState {
     pub fn end(&mut self) {
         self.cursor = self.buffer.chars().count();
     }
+
+    /// Forward-delete the character under the cursor (the `Delete` key).
+    pub fn delete(&mut self) {
+        let n = self.buffer.chars().count();
+        if self.cursor < n {
+            let start = self.byte_at(self.cursor);
+            let end = self.byte_at(self.cursor + 1);
+            self.buffer.replace_range(start..end, "");
+        }
+    }
+
+    /// Move the cursor up one logical line, keeping the column where possible.
+    /// Only meaningful for multiline inputs.
+    pub fn up(&mut self) {
+        let chars: Vec<char> = self.buffer.chars().collect();
+        let cur_start = line_start_of(&chars, self.cursor);
+        if cur_start == 0 {
+            self.cursor = 0;
+            return;
+        }
+        let col = self.cursor - cur_start;
+        let prev_start = line_start_of(&chars, cur_start - 1);
+        let prev_len = (cur_start - 1) - prev_start;
+        self.cursor = prev_start + col.min(prev_len);
+    }
+
+    /// Move the cursor down one logical line, keeping the column where possible.
+    pub fn down(&mut self) {
+        let chars: Vec<char> = self.buffer.chars().collect();
+        let n = chars.len();
+        let cur_start = line_start_of(&chars, self.cursor);
+        let col = self.cursor - cur_start;
+        let cur_end = (cur_start..n).find(|&i| chars[i] == '\n').unwrap_or(n);
+        if cur_end == n {
+            self.cursor = n;
+            return;
+        }
+        let next_start = cur_end + 1;
+        let next_end = (next_start..n).find(|&i| chars[i] == '\n').unwrap_or(n);
+        self.cursor = next_start + col.min(next_end - next_start);
+    }
+}
+
+/// Character index of the start of the logical line containing `cursor`.
+fn line_start_of(chars: &[char], cursor: usize) -> usize {
+    let mut start = 0;
+    for (i, &c) in chars.iter().enumerate().take(cursor) {
+        if c == '\n' {
+            start = i + 1;
+        }
+    }
+    start
 }
 
 /// What a pending [`Mode::Confirm`] will do if accepted.
@@ -165,6 +298,8 @@ pub enum ConfirmAction {
     DeleteTask,
     DeleteList,
     DeleteSubtask,
+    DeleteNote,
+    DeleteNotebook,
 }
 
 #[derive(Debug, Clone)]
@@ -214,10 +349,37 @@ pub struct ThemePickerState {
 pub struct MovePickerState {
     /// Indices into [`App::lists`] that are valid targets (every list but the source).
     pub targets: Vec<usize>,
-    /// Cursor into `targets`.
+    /// Type-to-filter query (case-insensitive substring match on list name).
+    pub filter: String,
+    /// Cursor into the *filtered* target list.
     pub selected: usize,
+    /// First visible filtered row (vertical scroll offset).
+    pub scroll: u16,
     /// Return to Detail mode (vs Normal) on cancel.
     pub return_detail: bool,
+}
+
+/// State for the full-screen rendered note read view.
+#[derive(Debug, Clone, Default)]
+pub struct NoteViewState {
+    /// Vertical scroll offset in rendered (wrapped) rows.
+    pub scroll: u16,
+}
+
+/// One entry in the note link picker: a display label and where it jumps.
+#[derive(Debug, Clone)]
+pub struct NoteLinkEntry {
+    pub label: String,
+    pub target: NoteRef,
+}
+
+/// State for the "follow a link" picker (outgoing links + backlinks).
+#[derive(Debug, Clone)]
+pub struct NoteLinkPickerState {
+    pub entries: Vec<NoteLinkEntry>,
+    pub selected: usize,
+    /// Return to the read view (vs the note list) on cancel.
+    pub return_view: bool,
 }
 
 /// What part of the selected task a copy action puts on the clipboard.
@@ -256,6 +418,43 @@ impl CopyWhat {
     }
 }
 
+/// What part of the selected note a copy action puts on the clipboard.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NoteCopyWhat {
+    /// The markdown body (no frontmatter).
+    Body,
+    /// Just the note title.
+    Title,
+    /// The whole note file, frontmatter included.
+    Markdown,
+}
+
+impl NoteCopyWhat {
+    pub fn all() -> [NoteCopyWhat; 3] {
+        [
+            NoteCopyWhat::Body,
+            NoteCopyWhat::Title,
+            NoteCopyWhat::Markdown,
+        ]
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            NoteCopyWhat::Body => "Body (markdown)",
+            NoteCopyWhat::Title => "Title",
+            NoteCopyWhat::Markdown => "Full note (with frontmatter)",
+        }
+    }
+
+    fn noun(self) -> &'static str {
+        match self {
+            NoteCopyWhat::Body => "body",
+            NoteCopyWhat::Title => "title",
+            NoteCopyWhat::Markdown => "note markdown",
+        }
+    }
+}
+
 /// State for the "copy selected task" menu overlay.
 #[derive(Debug, Clone)]
 pub struct CopyMenuState {
@@ -286,6 +485,13 @@ pub enum Mode {
     MovePicker(MovePickerState),
     CopyMenu(CopyMenuState),
     SortPicker(SortPickerState),
+    NoteSortPicker(SortPickerState),
+    NoteMovePicker(MovePickerState),
+    NoteCopyMenu(CopyMenuState),
+    /// Full-screen rendered read view of the selected note.
+    NoteView(NoteViewState),
+    /// Picker to follow a `[[link]]` (outgoing or backlink).
+    NoteLinkPicker(NoteLinkPickerState),
     Settings,
     Help,
 }
@@ -367,12 +573,24 @@ pub struct Clickables {
     pub tags_inner: Option<(Rect, usize)>,
     /// Inner area of the tasks pane and the scroll offset used to draw it.
     pub tasks_inner: Option<(Rect, usize)>,
+    /// Inner area of the notebooks pane and its scroll offset (Notes tab).
+    pub notebooks_inner: Option<(Rect, usize)>,
+    /// Inner area of the note-tags pane and its scroll offset (Notes tab).
+    pub note_tags_inner: Option<(Rect, usize)>,
+    /// Inner area of the note-list pane and its scroll offset (Notes tab).
+    pub note_list_inner: Option<(Rect, usize)>,
+    /// Header tab-strip chips and the tab each selects, for click-to-switch.
+    pub tab_rects: Vec<(Tab, Rect)>,
+    /// Clickable `[[link]]` rects in the rendered read view and their targets.
+    pub note_view_links: Vec<(Rect, NoteRef)>,
 }
 
 pub struct App {
     pub data_dir: PathBuf,
     pub lists: Vec<List>,
     pub mode: Mode,
+    /// The active top-level tab (Tasks / Notes). Session-only.
+    pub active_tab: Tab,
     pub focus: Focus,
     pub list_state: ListState,
     pub task_state: ListState,
@@ -399,19 +617,37 @@ pub struct App {
     /// (`#`) restores your place in that section.
     last_list_row: usize,
     last_tag_row: usize,
+
+    // --- Notes tab -----------------------------------------------------------
+    pub notebooks: Vec<Notebook>,
+    /// Flat cursor over the Notes sidebar (notebooks then note tags), mirroring
+    /// `list_state` on the Tasks tab.
+    pub notebook_state: ListState,
+    pub note_state: ListState,
+    pub notes_focus: NotesFocus,
+    /// Substring search over notes (Notes-tab counterpart to `filter`).
+    pub note_query: String,
+    pub note_sort: NoteSort,
+    pub note_sort_dir: SortDir,
+    last_notebook_row: usize,
+    last_note_tag_row: usize,
+    /// When set, the run loop suspends the TUI and opens this file in `$EDITOR`.
+    pub pending_editor: Option<PathBuf>,
 }
 
 impl App {
     /// Build the app. `data_dir = None` starts the first-run picker. The active
     /// theme defaults to Tokyo Night; call [`App::set_theme`] to change it.
     pub fn new(data_dir: Option<PathBuf>) -> anyhow::Result<Self> {
-        let (data_dir, lists, mode) = match data_dir {
+        let (data_dir, lists, notebooks, mode) = match data_dir {
             Some(dir) => {
                 let lists = storage::load_lists(&dir)?;
-                (dir, lists, Mode::Normal)
+                let notebooks = storage::load_notebooks(&dir)?;
+                (dir, lists, notebooks, Mode::Normal)
             }
             None => (
                 PathBuf::new(),
+                Vec::new(),
                 Vec::new(),
                 Mode::FirstRun(FirstRunState::new()),
             ),
@@ -424,6 +660,7 @@ impl App {
             data_dir,
             lists,
             mode,
+            active_tab: Tab::Tasks,
             focus: Focus::Lists,
             list_state: ListState::default(),
             task_state: ListState::default(),
@@ -440,6 +677,16 @@ impl App {
             clickables: Clickables::default(),
             last_list_row: 0,
             last_tag_row: 0,
+            notebooks,
+            notebook_state: ListState::default(),
+            note_state: ListState::default(),
+            notes_focus: NotesFocus::Notebooks,
+            note_query: String::new(),
+            note_sort: NoteSort::default(),
+            note_sort_dir: SortDir::default(),
+            last_notebook_row: 0,
+            last_note_tag_row: 0,
+            pending_editor: None,
         };
 
         // Pin any previously-created Archived list to the bottom, then select
@@ -449,6 +696,11 @@ impl App {
             if !app.lists.is_empty() {
                 app.list_state.select(Some(0));
                 app.task_state.select(Some(0));
+            }
+            app.sort_notebooks();
+            if !app.notebooks.is_empty() {
+                app.notebook_state.select(Some(0));
+                app.note_state.select(Some(0));
             }
         }
 
@@ -574,15 +826,41 @@ impl App {
                 return;
             }
         }
+        // Then the notebooks and their notes.
+        let notebooks = self.notebooks.clone();
+        for nb in &notebooks {
+            if let Err(e) = storage::create_notebook_dir(&new, &nb.slug) {
+                self.set_status(format!("move failed: {e}"));
+                return;
+            }
+            for note in &nb.notes {
+                if let Err(e) = storage::save_note(&new, &nb.slug, note) {
+                    self.set_status(format!("move failed: {e}"));
+                    return;
+                }
+            }
+        }
+        // Preserve the manual notebook order in the new location.
+        let ordered: Vec<String> = notebooks
+            .iter()
+            .filter(|n| !n.is_archive())
+            .map(|n| n.slug.clone())
+            .collect();
+        let _ = storage::save_notebook_order(&new, &ordered);
         // Then remove the originals.
         for list in &lists {
             let _ = storage::delete_list_file(&old, list);
+        }
+        for nb in &notebooks {
+            let _ = storage::delete_notebook_dir(&old, &nb.slug);
         }
         self.data_dir = new.clone();
         match storage::load_lists(&new) {
             Ok(l) => self.lists = l,
             Err(e) => self.set_status(format!("load error: {e}")),
         }
+        self.notebooks = storage::load_notebooks(&new).unwrap_or_default();
+        self.reselect_notebook(None);
         self.sort_lists();
         if self.lists.is_empty() {
             self.list_state.select(None);
@@ -961,32 +1239,93 @@ impl App {
             Mode::Detail => self.move_subtask(delta),
             _ => match self.focus {
                 Focus::Lists => self.move_list(delta),
-                Focus::Tasks => self.move_task(delta),
+                Focus::Tasks => self.move_task(delta, true),
             },
         }
     }
 
     fn move_list(&mut self, delta: isize) {
-        // One flat cursor runs through the lists then the tags, so `j`/`k` flow
-        // straight from the last list into the tag pane.
-        let len = self.sidebar_rows().len();
-        if len == 0 {
+        // `j`/`k` round-robin *within* the current pane (the lists, or the tags),
+        // wrapping top-to-bottom rather than spilling into the neighbouring pane.
+        // Crossing between the two panes is `toggle_sidebar_pane`'s job.
+        let total = self.sidebar_rows().len();
+        if total == 0 {
             return;
         }
-        let cur = self.list_state.selected().unwrap_or(0) as isize;
-        let next = (cur + delta).clamp(0, len as isize - 1) as usize;
+        let lists = self.lists.len();
+        let cur = self.list_state.selected().unwrap_or(0);
+        let (lo, hi) = if cur < lists {
+            (0, lists.saturating_sub(1))
+        } else {
+            (lists, total - 1)
+        };
+        let next = wrap_index(cur, delta, lo, hi);
         self.list_state.select(Some(next));
         self.task_state.select(Some(0));
     }
 
-    fn move_task(&mut self, delta: isize) {
+    /// Flip the sidebar cursor between the Lists pane and the Tags pane in one
+    /// keystroke, so a long list of lists never stands between you and the tags.
+    /// From the tasks pane it first steps back into the sidebar; a second press
+    /// then flips panes. Crossing into the tags is a no-op when none exist.
+    pub fn toggle_sidebar_pane(&mut self) {
+        if self.focus == Focus::Tasks {
+            self.focus = Focus::Lists;
+            return;
+        }
+        match self.selected_row() {
+            Some(SidebarRow::Tag(_)) => self.focus_lists(),
+            _ => self.focus_tags(),
+        }
+    }
+
+    /// Scroll-wheel movement, which (unlike `j`/`k`) stays within the section
+    /// the cursor is currently in. Reaching the end of the lists therefore
+    /// stops at the last list instead of spilling into the tags pane.
+    pub fn scroll_selection(&mut self, delta: isize) {
+        match self.mode {
+            Mode::Detail => self.move_subtask(delta),
+            _ => match self.focus {
+                Focus::Lists => self.scroll_list(delta),
+                Focus::Tasks => self.move_task(delta, false),
+            },
+        }
+    }
+
+    fn scroll_list(&mut self, delta: isize) {
+        let total = self.sidebar_rows().len();
+        if total == 0 {
+            return;
+        }
+        let lists = self.lists.len();
+        let cur = self.list_state.selected().unwrap_or(0);
+        // Clamp within the current section (lists, then tags) so the wheel
+        // doesn't cross the boundary between the two panes.
+        let (lo, hi) = if cur < lists {
+            (0, lists.saturating_sub(1))
+        } else {
+            (lists, total - 1)
+        };
+        let next = (cur as isize + delta).clamp(lo as isize, hi as isize) as usize;
+        self.list_state.select(Some(next));
+        self.task_state.select(Some(0));
+    }
+
+    /// Move within the visible task list. `j`/`k` round-robin (`wrap`), so past
+    /// the last task lands on the first and vice versa; the wheel clamps at the
+    /// ends instead (matching the sidebar).
+    fn move_task(&mut self, delta: isize, wrap: bool) {
         let len = self.visible_task_indices().len();
         if len == 0 {
             self.task_state.select(None);
             return;
         }
-        let cur = self.selected_visible_task() as isize;
-        let next = (cur + delta).clamp(0, len as isize - 1) as usize;
+        let cur = self.selected_visible_task();
+        let next = if wrap {
+            wrap_index(cur, delta, 0, len - 1)
+        } else {
+            (cur as isize + delta).clamp(0, len as isize - 1) as usize
+        };
         self.task_state.select(Some(next));
     }
 
@@ -1513,23 +1852,49 @@ impl App {
         if vis.len() < 2 {
             return;
         }
-        let from = vis[self.selected_visible_task()].task;
-        // Insertion point (raw index) once `from` is spliced out: the current
-        // first visible slot for a hoist, the current last for a sink. Both stay
-        // valid after the removal because `from` lies within [first, last].
-        let dest = if to_top {
-            vis[0].task
+        let Some(from) = vis.get(self.selected_visible_task()).map(|r| r.task) else {
+            return;
+        };
+        // With "sink completed" on, the display re-sorts done tasks to the bottom
+        // after every edit, so a task can only travel within its own done-group —
+        // sending it past that edge just gets undone by the next re-sink. Anchor
+        // the move to the far edge of that group (the first/last visible task
+        // sharing the selection's done state); without sinking every visible task
+        // qualifies, so this collapses to the plain first/last visible task.
+        let from_done = self.lists[li].tasks[from].done;
+        let sink = self.completed_to_bottom;
+        let same_group =
+            |r: &TaskRef| !sink || self.lists[r.list].tasks[r.task].done == from_done;
+        let dest_ref = if to_top {
+            vis.iter().find(|r| r.task != from && same_group(r))
         } else {
-            vis.last().unwrap().task
+            vis.iter().rev().find(|r| r.task != from && same_group(r))
+        }
+        .map(|r| r.task);
+        // Sole member of its group: nothing to move past, so leave it put.
+        let Some(dest_ref) = dest_ref else {
+            return;
         };
         let Some(list) = self.lists.get_mut(li) else {
             return;
         };
         let task = list.tasks.remove(from);
-        list.tasks.insert(dest, task);
+        // `dest_ref` was a raw index before the splice; shift it down if it sat
+        // after `from`, then land just past it for a sink or just before it for a
+        // hoist.
+        let ref_adj = if dest_ref > from { dest_ref - 1 } else { dest_ref };
+        let insert_at = if to_top { ref_adj } else { ref_adj + 1 };
+        list.tasks.insert(insert_at, task);
         self.save_list_at(li);
-        self.task_state
-            .select(Some(if to_top { 0 } else { vis.len() - 1 }));
+        // The re-sink can drop the task anywhere in the view, so select it by its
+        // new stored index rather than assuming the first/last visible slot.
+        if let Some(pos) = self
+            .visible_task_refs()
+            .iter()
+            .position(|r| r.list == li && r.task == insert_at)
+        {
+            self.task_state.select(Some(pos));
+        }
     }
 
     // --- move a task to another list -----------------------------------------
@@ -1552,19 +1917,58 @@ impl App {
         }
         self.mode = Mode::MovePicker(MovePickerState {
             targets,
+            filter: String::new(),
             selected: 0,
+            scroll: 0,
             return_detail: self.in_detail(),
         });
     }
 
-    /// Move the picker highlight (wraps).
+    /// Target list indices matching the current filter, in target order. Returns
+    /// all targets when the filter is empty; empty vec when not in the picker.
+    pub fn move_picker_filtered(&self) -> Vec<usize> {
+        let Mode::MovePicker(state) = &self.mode else {
+            return Vec::new();
+        };
+        let q = state.filter.trim().to_lowercase();
+        if q.is_empty() {
+            return state.targets.clone();
+        }
+        state
+            .targets
+            .iter()
+            .copied()
+            .filter(|&i| self.lists[i].name.to_lowercase().contains(&q))
+            .collect()
+    }
+
+    /// Move the picker highlight over the filtered set (wraps).
     pub fn move_picker_move(&mut self, delta: isize) {
+        let n = self.move_picker_filtered().len() as isize;
         if let Mode::MovePicker(state) = &mut self.mode {
-            let n = state.targets.len() as isize;
             if n == 0 {
+                state.selected = 0;
                 return;
             }
             state.selected = ((((state.selected as isize + delta) % n) + n) % n) as usize;
+        }
+    }
+
+    /// Append a character to the filter, resetting the cursor to the top match.
+    pub fn move_picker_type(&mut self, c: char) {
+        if let Mode::MovePicker(state) = &mut self.mode {
+            state.filter.push(c);
+            state.selected = 0;
+            state.scroll = 0;
+        }
+    }
+
+    /// Delete the last filter character, resetting the cursor to the top match.
+    pub fn move_picker_backspace(&mut self) {
+        if let Mode::MovePicker(state) = &mut self.mode {
+            state.filter.pop();
+            state.selected = 0;
+            state.scroll = 0;
         }
     }
 
@@ -1572,8 +1976,9 @@ impl App {
     /// highlighted one, persisting both. The task leaves this list, so we always
     /// return to Normal (its detail view no longer applies here).
     pub fn move_picker_confirm(&mut self) {
+        let filtered = self.move_picker_filtered();
         let target = match &self.mode {
-            Mode::MovePicker(state) => state.targets.get(state.selected).copied(),
+            Mode::MovePicker(state) => filtered.get(state.selected).copied(),
             _ => return,
         };
         let key = self.selected_entry_key();
@@ -2128,6 +2533,1418 @@ impl App {
         }
     }
 
+    // =========================================================================
+    // Notes tab
+    // =========================================================================
+
+    /// Switch the active top-level tab, leaving any transient mode. Ensures the
+    /// destination tab has a sensible selection.
+    pub fn switch_tab(&mut self, tab: Tab) {
+        if self.active_tab == tab {
+            return;
+        }
+        self.active_tab = tab;
+        self.mode = Mode::Normal;
+        match tab {
+            Tab::Notes => {
+                if self.notebook_state.selected().is_none() && !self.notebooks.is_empty() {
+                    self.notebook_state.select(Some(0));
+                    self.note_state.select(Some(0));
+                }
+            }
+            Tab::Tasks => {
+                if self.list_state.selected().is_none() && !self.lists.is_empty() {
+                    self.list_state.select(Some(0));
+                    self.task_state.select(Some(0));
+                }
+            }
+        }
+    }
+
+    /// Total notes across every notebook, for the header summary.
+    pub fn total_note_count(&self) -> usize {
+        self.notebooks.iter().map(|nb| nb.notes.len()).sum()
+    }
+
+    // --- sidebar rows / tags -------------------------------------------------
+
+    /// The Notes sidebar's flat selection order: every notebook first (so
+    /// `Notebook(i)` sits at index `i`), then one row per distinct note tag.
+    pub fn note_sidebar_rows(&self) -> Vec<NoteSidebarRow> {
+        let mut rows: Vec<NoteSidebarRow> = (0..self.notebooks.len())
+            .map(NoteSidebarRow::Notebook)
+            .collect();
+        rows.extend(self.all_note_tags().into_iter().map(NoteSidebarRow::Tag));
+        rows
+    }
+
+    /// Every distinct tag across all notes, sorted alphabetically. Archived notes
+    /// are excluded (matching the cross-notebook tag view).
+    pub fn all_note_tags(&self) -> Vec<String> {
+        let mut set = std::collections::BTreeSet::new();
+        for nb in &self.notebooks {
+            if nb.is_archive() {
+                continue;
+            }
+            for note in &nb.notes {
+                for tag in &note.tags {
+                    set.insert(tag.clone());
+                }
+            }
+        }
+        set.into_iter().collect()
+    }
+
+    /// Count of notes carrying `name` across every real (non-archived) notebook.
+    pub fn note_tag_count(&self, name: &str) -> usize {
+        self.notebooks
+            .iter()
+            .filter(|nb| !nb.is_archive())
+            .flat_map(|nb| nb.notes.iter())
+            .filter(|n| n.tags.iter().any(|t| t == name))
+            .count()
+    }
+
+    pub fn selected_note_row(&self) -> Option<NoteSidebarRow> {
+        self.note_sidebar_rows()
+            .into_iter()
+            .nth(self.notebook_state.selected()?)
+    }
+
+    pub fn current_note_view(&self) -> Option<NoteView> {
+        match self.selected_note_row()? {
+            NoteSidebarRow::Notebook(i) => Some(NoteView::Notebook(i)),
+            NoteSidebarRow::Tag(name) => Some(NoteView::Tag(name)),
+        }
+    }
+
+    /// The selected notebook's index, or `None` when a tag row is selected.
+    pub fn selected_notebook_index(&self) -> Option<usize> {
+        match self.current_note_view()? {
+            NoteView::Notebook(i) => Some(i),
+            NoteView::Tag(_) => None,
+        }
+    }
+
+    pub fn current_notebook(&self) -> Option<&Notebook> {
+        self.notebooks.get(self.selected_notebook_index()?)
+    }
+
+    // --- visible notes -------------------------------------------------------
+
+    /// The notes shown in the note list, as `(notebook, note)` references in
+    /// display order: filtered by the search query, ordered by the active
+    /// [`NoteSort`], with pinned notes floated to the top.
+    pub fn visible_note_refs(&self) -> Vec<NoteRef> {
+        let mut refs: Vec<NoteRef> = match self.current_note_view() {
+            Some(NoteView::Notebook(ni)) => {
+                let Some(nb) = self.notebooks.get(ni) else {
+                    return Vec::new();
+                };
+                nb.notes
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, n)| n.matches_query(&self.note_query))
+                    .map(|(note, _)| NoteRef { notebook: ni, note })
+                    .collect()
+            }
+            Some(NoteView::Tag(tag)) => {
+                let mut out = Vec::new();
+                for (ni, nb) in self.notebooks.iter().enumerate() {
+                    if nb.is_archive() {
+                        continue;
+                    }
+                    for (ti, note) in nb.notes.iter().enumerate() {
+                        if note.tags.contains(&tag) && note.matches_query(&self.note_query) {
+                            out.push(NoteRef {
+                                notebook: ni,
+                                note: ti,
+                            });
+                        }
+                    }
+                }
+                out
+            }
+            None => return Vec::new(),
+        };
+        self.sort_note_refs(&mut refs);
+        refs
+    }
+
+    /// Order `refs` by the active sort/direction, then float pinned notes to the
+    /// top. Both passes are stable, so `NoteSort::Manual` preserves stored order.
+    fn sort_note_refs(&self, refs: &mut [NoteRef]) {
+        let note = |r: &NoteRef| &self.notebooks[r.notebook].notes[r.note];
+        if self.note_sort != NoteSort::Manual {
+            refs.sort_by(|a, b| {
+                let ord = self.note_sort.compare(note(a), note(b));
+                match self.note_sort_dir {
+                    SortDir::Ascending => ord,
+                    SortDir::Descending => ord.reverse(),
+                }
+            });
+        }
+        refs.sort_by_key(|r| !note(r).pinned);
+    }
+
+    pub fn selected_visible_note(&self) -> usize {
+        self.note_state.selected().unwrap_or(0)
+    }
+
+    pub fn current_note_ref(&self) -> Option<NoteRef> {
+        self.visible_note_refs()
+            .get(self.selected_visible_note())
+            .copied()
+    }
+
+    pub fn current_note(&self) -> Option<&Note> {
+        let r = self.current_note_ref()?;
+        self.notebooks.get(r.notebook)?.notes.get(r.note)
+    }
+
+    // --- selection bookkeeping ----------------------------------------------
+
+    fn selected_note_entry_key(&self) -> Option<NoteEntryKey> {
+        match self.selected_note_row()? {
+            NoteSidebarRow::Notebook(i) => {
+                Some(NoteEntryKey::Notebook(self.notebooks[i].slug.clone()))
+            }
+            NoteSidebarRow::Tag(name) => Some(NoteEntryKey::Tag(name)),
+        }
+    }
+
+    /// Re-select the row identified by `key` after a mutation that may have added
+    /// or removed rows (a tag appearing/disappearing), clamping when it's gone.
+    fn reselect_notebook(&mut self, key: Option<NoteEntryKey>) {
+        let rows = self.note_sidebar_rows();
+        if rows.is_empty() {
+            self.notebook_state.select(None);
+            return;
+        }
+        let found = key.and_then(|k| {
+            rows.iter().position(|row| match (&k, row) {
+                (NoteEntryKey::Notebook(slug), NoteSidebarRow::Notebook(i)) => {
+                    &self.notebooks[*i].slug == slug
+                }
+                (NoteEntryKey::Tag(a), NoteSidebarRow::Tag(b)) => a == b,
+                _ => false,
+            })
+        });
+        let idx = found.unwrap_or_else(|| {
+            self.notebook_state
+                .selected()
+                .unwrap_or(0)
+                .min(rows.len() - 1)
+        });
+        self.notebook_state.select(Some(idx));
+    }
+
+    fn clamp_note_selection(&mut self) {
+        let len = self.visible_note_refs().len();
+        if len == 0 {
+            self.note_state.select(None);
+        } else {
+            let cur = self.selected_visible_note().min(len - 1);
+            self.note_state.select(Some(cur));
+        }
+    }
+
+    /// Re-select note `current` after a re-order, else clamp.
+    fn keep_note_selected(&mut self, current: Option<NoteRef>) {
+        if let Some(r) = current
+            && let Some(pos) = self.visible_note_refs().iter().position(|&x| x == r)
+        {
+            self.note_state.select(Some(pos));
+        } else {
+            self.clamp_note_selection();
+        }
+    }
+
+    // --- navigation ----------------------------------------------------------
+
+    pub fn note_move_selection(&mut self, delta: isize) {
+        if matches!(self.mode, Mode::Detail) {
+            return;
+        }
+        match self.notes_focus {
+            NotesFocus::Notebooks => {
+                // Round-robin within the current pane (notebooks, or note tags),
+                // mirroring the Tasks-tab sidebar (see `App::move_list`).
+                let total = self.note_sidebar_rows().len();
+                if total == 0 {
+                    return;
+                }
+                let notebooks = self.notebooks.len();
+                let cur = self.notebook_state.selected().unwrap_or(0);
+                let (lo, hi) = if cur < notebooks {
+                    (0, notebooks.saturating_sub(1))
+                } else {
+                    (notebooks, total - 1)
+                };
+                let next = wrap_index(cur, delta, lo, hi);
+                self.notebook_state.select(Some(next));
+                self.note_state.select(Some(0));
+            }
+            NotesFocus::Notes => {
+                // Round-robin the note list, mirroring the Tasks tab.
+                let len = self.visible_note_refs().len();
+                if len == 0 {
+                    self.note_state.select(None);
+                    return;
+                }
+                let cur = self.selected_visible_note();
+                let next = wrap_index(cur, delta, 0, len - 1);
+                self.note_state.select(Some(next));
+            }
+        }
+    }
+
+    /// Flip the Notes sidebar between the Notebooks pane and the note-tags pane,
+    /// parallel to [`App::toggle_sidebar_pane`] on the Tasks tab.
+    pub fn note_toggle_sidebar_pane(&mut self) {
+        if self.notes_focus == NotesFocus::Notes {
+            self.notes_focus = NotesFocus::Notebooks;
+            return;
+        }
+        match self.selected_note_row() {
+            Some(NoteSidebarRow::Tag(_)) => self.note_focus_notebooks(),
+            _ => self.note_focus_tags(),
+        }
+    }
+
+    /// Scroll-wheel movement for the Notes tab, staying within the section the
+    /// cursor is in so reaching the end of the notebooks doesn't spill into the
+    /// note-tags pane (mirrors [`App::scroll_selection`]).
+    pub fn note_scroll_selection(&mut self, delta: isize) {
+        if matches!(self.mode, Mode::Detail) {
+            return;
+        }
+        match self.notes_focus {
+            NotesFocus::Notebooks => {
+                let total = self.note_sidebar_rows().len();
+                if total == 0 {
+                    return;
+                }
+                let notebooks = self.notebooks.len();
+                let cur = self.notebook_state.selected().unwrap_or(0);
+                let (lo, hi) = if cur < notebooks {
+                    (0, notebooks.saturating_sub(1))
+                } else {
+                    (notebooks, total - 1)
+                };
+                let next = (cur as isize + delta).clamp(lo as isize, hi as isize) as usize;
+                self.notebook_state.select(Some(next));
+                self.note_state.select(Some(0));
+            }
+            NotesFocus::Notes => {
+                let len = self.visible_note_refs().len();
+                if len == 0 {
+                    self.note_state.select(None);
+                    return;
+                }
+                let cur = self.selected_visible_note() as isize;
+                let next = (cur + delta).clamp(0, len as isize - 1) as usize;
+                self.note_state.select(Some(next));
+            }
+        }
+    }
+
+    pub fn note_toggle_focus(&mut self) {
+        match self.notes_focus {
+            NotesFocus::Notebooks => self.note_focus_notes(),
+            NotesFocus::Notes => self.notes_focus = NotesFocus::Notebooks,
+        }
+    }
+
+    fn remember_note_row(&mut self) {
+        match self.selected_note_row() {
+            Some(NoteSidebarRow::Notebook(i)) => self.last_notebook_row = i,
+            Some(NoteSidebarRow::Tag(_)) => {
+                if let Some(sel) = self.notebook_state.selected() {
+                    self.last_note_tag_row = sel.saturating_sub(self.notebooks.len());
+                }
+            }
+            None => {}
+        }
+    }
+
+    fn set_note_row_reset(&mut self, idx: usize) {
+        if self.notebook_state.selected() != Some(idx) {
+            self.notebook_state.select(Some(idx));
+            self.note_state.select(Some(0));
+        }
+    }
+
+    pub fn note_focus_notebooks(&mut self) {
+        self.remember_note_row();
+        self.notes_focus = NotesFocus::Notebooks;
+        if self.notebooks.is_empty() {
+            self.notebook_state.select(None);
+        } else {
+            let idx = self.last_notebook_row.min(self.notebooks.len() - 1);
+            self.set_note_row_reset(idx);
+        }
+    }
+
+    pub fn note_focus_notes(&mut self) {
+        self.notes_focus = NotesFocus::Notes;
+        if self.note_state.selected().is_none() && !self.visible_note_refs().is_empty() {
+            self.note_state.select(Some(0));
+        }
+    }
+
+    pub fn note_focus_tags(&mut self) {
+        let n = self.all_note_tags().len();
+        if n == 0 {
+            return;
+        }
+        self.remember_note_row();
+        self.notes_focus = NotesFocus::Notebooks;
+        let idx = self.notebooks.len() + self.last_note_tag_row.min(n - 1);
+        self.set_note_row_reset(idx);
+    }
+
+    pub fn note_activate(&mut self) {
+        match self.notes_focus {
+            NotesFocus::Notebooks => {
+                if !self.notebooks.is_empty() {
+                    self.note_focus_notes();
+                }
+            }
+            // Enter on a note drops straight into the full-screen body editor.
+            NotesFocus::Notes => {
+                if self.current_note().is_some() {
+                    self.start_edit_note_body();
+                }
+            }
+        }
+    }
+
+    pub fn select_note_sidebar_row(&mut self, idx: usize) {
+        if idx < self.note_sidebar_rows().len() {
+            self.notebook_state.select(Some(idx));
+            self.note_state.select(Some(0));
+            self.notes_focus = NotesFocus::Notebooks;
+        }
+    }
+
+    pub fn select_note_visible(&mut self, vidx: usize) {
+        if vidx < self.visible_note_refs().len() {
+            self.note_state.select(Some(vidx));
+            self.notes_focus = NotesFocus::Notes;
+        }
+    }
+
+    // --- persistence helpers -------------------------------------------------
+
+    fn save_note_at(&mut self, ni: usize, note_idx: usize) {
+        let result = {
+            let Some(nb) = self.notebooks.get(ni) else {
+                return;
+            };
+            let Some(note) = nb.notes.get(note_idx) else {
+                return;
+            };
+            storage::save_note(&self.data_dir, &nb.slug, note)
+        };
+        if let Err(e) = result {
+            self.set_status(format!("save error: {e}"));
+        }
+    }
+
+    /// Run `f` against the selected note, stamp its modified time, and persist.
+    fn with_current_note<F: FnOnce(&mut Note)>(&mut self, f: F) -> bool {
+        let Some(r) = self.current_note_ref() else {
+            return false;
+        };
+        let ok = if let Some(note) = self
+            .notebooks
+            .get_mut(r.notebook)
+            .and_then(|nb| nb.notes.get_mut(r.note))
+        {
+            f(note);
+            note.modified = Utc::now();
+            true
+        } else {
+            false
+        };
+        if ok {
+            self.save_note_at(r.notebook, r.note);
+        }
+        ok
+    }
+
+    /// Sort notebooks by name, with the Archived notebook always pinned to the
+    /// bottom (mirrors how the Archived list sits at the foot of the sidebar).
+    fn sort_notebooks(&mut self) {
+        self.notebooks
+            .sort_by(|a, b| match (a.is_archive(), b.is_archive()) {
+                (true, false) => std::cmp::Ordering::Greater,
+                (false, true) => std::cmp::Ordering::Less,
+                _ => a
+                    .order
+                    .unwrap_or(u32::MAX)
+                    .cmp(&b.order.unwrap_or(u32::MAX))
+                    .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase())),
+            });
+    }
+
+    /// Give every non-archive notebook an explicit `order` matching its current
+    /// position and persist the order file. Called after a reorder so it sticks.
+    fn renumber_notebooks(&mut self) {
+        let mut slugs = Vec::new();
+        let mut next = 0u32;
+        for nb in self.notebooks.iter_mut() {
+            if nb.is_archive() {
+                continue;
+            }
+            nb.order = Some(next);
+            slugs.push(nb.slug.clone());
+            next += 1;
+        }
+        if let Err(e) = storage::save_notebook_order(&self.data_dir, &slugs) {
+            self.set_status(format!("save error: {e}"));
+        }
+    }
+
+    /// Focus-aware reorder on the Notes tab: nudge the selected notebook (on the
+    /// notebooks pane) or note (on the notes pane) by `delta`.
+    pub fn note_reorder_selection(&mut self, delta: isize) {
+        match self.notes_focus {
+            NotesFocus::Notebooks => self.reorder_notebook(delta),
+            NotesFocus::Notes => self.reorder_note(delta),
+        }
+    }
+
+    /// Swap the selected notebook with its neighbour `delta` slots away and
+    /// persist. No-op on a tag row, in the full-screen editor, at the ends, or
+    /// involving the pinned Archived notebook.
+    pub fn reorder_notebook(&mut self, delta: isize) {
+        if self.notes_focus != NotesFocus::Notebooks || matches!(self.mode, Mode::Detail) {
+            return;
+        }
+        let Some(cur) = self.selected_notebook_index() else {
+            return;
+        };
+        let target = cur as isize + delta;
+        if target < 0 || target >= self.notebooks.len() as isize {
+            return;
+        }
+        let target = target as usize;
+        if self.notebooks[cur].is_archive() || self.notebooks[target].is_archive() {
+            return;
+        }
+        self.notebooks.swap(cur, target);
+        self.renumber_notebooks();
+        self.notebook_state.select(Some(target));
+    }
+
+    fn archive_notebook_index(&self) -> Option<usize> {
+        self.notebooks.iter().position(|n| n.is_archive())
+    }
+
+    /// Create the Archived notebook (folder + in-memory) if it doesn't exist.
+    /// Appends it so existing notebook indices stay valid.
+    fn ensure_archive_notebook(&mut self) {
+        if self.data_dir.as_os_str().is_empty() || self.archive_notebook_index().is_some() {
+            return;
+        }
+        if let Err(e) = storage::create_notebook_dir(&self.data_dir, model::ARCHIVE_NOTEBOOK_SLUG) {
+            self.set_status(format!("save error: {e}"));
+            return;
+        }
+        let mut nb = Notebook::new(model::ARCHIVE_NOTEBOOK_NAME);
+        nb.slug = model::ARCHIVE_NOTEBOOK_SLUG.to_string();
+        self.notebooks.push(nb);
+    }
+
+    /// Bake current vec positions into explicit `order` values and persist those
+    /// that changed — called after a note reorder so it survives a reload.
+    fn renumber_notes(&mut self, ni: usize) {
+        let mut changed = Vec::new();
+        if let Some(nb) = self.notebooks.get_mut(ni) {
+            for (i, note) in nb.notes.iter_mut().enumerate() {
+                let want = i as u32;
+                if note.order != Some(want) {
+                    note.order = Some(want);
+                    changed.push(i);
+                }
+            }
+        }
+        for i in changed {
+            self.save_note_at(ni, i);
+        }
+    }
+
+    // --- notebook CRUD -------------------------------------------------------
+
+    pub fn add_notebook(&mut self, name: String) {
+        let name = name.trim().to_string();
+        if name.is_empty() {
+            return;
+        }
+        let slug = storage::unique_notebook_slug(&self.data_dir, &name);
+        if let Err(e) = storage::create_notebook_dir(&self.data_dir, &slug) {
+            self.set_status(format!("save error: {e}"));
+            return;
+        }
+        let mut nb = Notebook::new(slug.clone());
+        nb.slug = slug.clone();
+        self.notebooks.push(nb);
+        self.sort_notebooks();
+        let pos = self
+            .notebooks
+            .iter()
+            .position(|n| n.slug == slug)
+            .unwrap_or(0);
+        self.notebook_state.select(Some(pos));
+        self.note_state.select(Some(0));
+        self.notes_focus = NotesFocus::Notebooks;
+    }
+
+    pub fn rename_current_notebook(&mut self, name: String) {
+        let name = name.trim().to_string();
+        if name.is_empty() {
+            return;
+        }
+        let Some(ni) = self.selected_notebook_index() else {
+            return;
+        };
+        if self.notebooks[ni].is_archive() {
+            return;
+        }
+        let old_slug = self.notebooks[ni].slug.clone();
+        // Same folder after sanitizing means nothing to do.
+        if storage::sanitize_notebook_name(&name) == old_slug {
+            return;
+        }
+        let new_slug = storage::unique_notebook_slug(&self.data_dir, &name);
+        if let Err(e) = storage::rename_notebook_dir(&self.data_dir, &old_slug, &new_slug) {
+            self.set_status(format!("rename error: {e}"));
+            return;
+        }
+        self.notebooks[ni].slug = new_slug.clone();
+        self.notebooks[ni].name = new_slug.clone();
+        self.sort_notebooks();
+        let pos = self
+            .notebooks
+            .iter()
+            .position(|n| n.slug == new_slug)
+            .unwrap_or(ni);
+        self.notebook_state.select(Some(pos));
+        self.note_state.select(Some(0));
+        self.notes_focus = NotesFocus::Notebooks;
+    }
+
+    pub fn delete_current_notebook(&mut self) {
+        let Some(ni) = self.selected_notebook_index() else {
+            return;
+        };
+        let key = self.selected_note_entry_key();
+        let nb = self.notebooks.remove(ni);
+        if let Err(e) = storage::delete_notebook_dir(&self.data_dir, &nb.slug) {
+            self.set_status(format!("delete error: {e}"));
+        }
+        self.reselect_notebook(key);
+        self.clamp_note_selection();
+        self.notes_focus = NotesFocus::Notebooks;
+    }
+
+    // --- note CRUD -----------------------------------------------------------
+
+    pub fn add_note(&mut self, input: String) {
+        // Pull `#tag` tokens out of the title, like the task quick-add parser.
+        let (title, tags) = model::parse_note_title(&input);
+        if title.is_empty() {
+            return;
+        }
+        let Some(ni) = self.selected_notebook_index() else {
+            self.set_status("select a notebook to add a note".to_string());
+            return;
+        };
+        let nb_slug = self.notebooks[ni].slug.clone();
+        let slug = storage::unique_note_slug(&self.data_dir, &nb_slug, &title);
+        let mut note = Note::new(title);
+        note.slug = slug;
+        note.tags = tags;
+        self.notebooks[ni].notes.push(note);
+        let new_idx = self.notebooks[ni].notes.len() - 1;
+        self.save_note_at(ni, new_idx);
+        let refs = self.visible_note_refs();
+        if let Some(pos) = refs
+            .iter()
+            .position(|r| r.notebook == ni && r.note == new_idx)
+        {
+            self.note_state.select(Some(pos));
+        }
+        self.notes_focus = NotesFocus::Notes;
+        self.set_status("note added — n to write, E for $EDITOR".to_string());
+    }
+
+    pub fn edit_current_note_title(&mut self, title: String) {
+        let title = title.trim().to_string();
+        if title.is_empty() {
+            return;
+        }
+        self.with_current_note(|n| n.title = title);
+    }
+
+    pub fn set_current_note_body(&mut self, body: String) {
+        self.with_current_note(|n| n.body = body);
+    }
+
+    pub fn set_current_note_tags(&mut self, input: &str) {
+        let tags = model::parse_tags(input);
+        let key = self.selected_note_entry_key();
+        self.with_current_note(|n| n.tags = tags);
+        self.reselect_notebook(key);
+        self.clamp_note_selection();
+    }
+
+    pub fn toggle_current_note_pin(&mut self) {
+        let current = self.current_note_ref();
+        let pinned = self.current_note().map(|n| !n.pinned);
+        self.with_current_note(|n| n.pinned = !n.pinned);
+        self.keep_note_selected(current);
+        if let Some(p) = pinned {
+            self.set_status(if p { "pinned" } else { "unpinned" }.to_string());
+        }
+    }
+
+    pub fn delete_current_note(&mut self) {
+        let Some(r) = self.current_note_ref() else {
+            return;
+        };
+        let key = self.selected_note_entry_key();
+        let nb_slug = self.notebooks[r.notebook].slug.clone();
+        let note_slug = self.notebooks[r.notebook].notes[r.note].slug.clone();
+        self.notebooks[r.notebook].notes.remove(r.note);
+        if let Err(e) = storage::delete_note_file(&self.data_dir, &nb_slug, &note_slug) {
+            self.set_status(format!("delete error: {e}"));
+        }
+        self.reselect_notebook(key);
+        self.clamp_note_selection();
+        if matches!(self.mode, Mode::Detail) {
+            self.mode = Mode::Normal;
+        }
+    }
+
+    // --- archive / move ------------------------------------------------------
+
+    /// `d` on the Notes tab: archive the selected note. On the notebooks pane
+    /// there's nothing to archive, so it just points at `X` (like `d` on a list).
+    pub fn note_archive_selection(&mut self) {
+        if self.notes_focus == NotesFocus::Notebooks {
+            self.set_status("notebooks can't be archived — X deletes a notebook".to_string());
+            return;
+        }
+        self.archive_current_note();
+    }
+
+    /// Move the selected note into the Archived notebook (creating it on first
+    /// use). Reversible via `m`, so no confirm. No-op when the note already lives
+    /// in the archive.
+    pub fn archive_current_note(&mut self) {
+        let Some(r) = self.current_note_ref() else {
+            return;
+        };
+        if self.notebooks[r.notebook].is_archive() {
+            self.set_status("already archived — X deletes, m moves it out".to_string());
+            return;
+        }
+        let key = self.selected_note_entry_key();
+        let src_slug = self.notebooks[r.notebook].slug.clone();
+        self.ensure_archive_notebook();
+        let Some(dest) = self.archive_notebook_index() else {
+            return;
+        };
+        let mut note = self.notebooks[r.notebook].notes.remove(r.note);
+        let old_slug = note.slug.clone();
+        let title = note.title.clone();
+        let dest_slug = self.notebooks[dest].slug.clone();
+        note.slug = storage::unique_note_slug(&self.data_dir, &dest_slug, &title);
+        self.notebooks[dest].notes.push(note);
+        let dest_idx = self.notebooks[dest].notes.len() - 1;
+        self.save_note_at(dest, dest_idx);
+        let _ = storage::delete_note_file(&self.data_dir, &src_slug, &old_slug);
+        self.reselect_notebook(key);
+        self.clamp_note_selection();
+        if matches!(self.mode, Mode::Detail) {
+            self.mode = Mode::Normal;
+        }
+        self.set_status(format!("archived \"{title}\""));
+    }
+
+    /// Open the picker to move the selected note to another notebook. Excludes
+    /// the archive as a target (archiving uses `d`); moving *out* of the archive
+    /// to a real notebook is how you unarchive.
+    pub fn start_move_note(&mut self) {
+        let Some(r) = self.current_note_ref() else {
+            return;
+        };
+        let src = r.notebook;
+        let targets: Vec<usize> = (0..self.notebooks.len())
+            .filter(|&i| i != src && !self.notebooks[i].is_archive())
+            .collect();
+        if targets.is_empty() {
+            self.set_status("no other notebook to move to".to_string());
+            return;
+        }
+        self.mode = Mode::NoteMovePicker(MovePickerState {
+            targets,
+            filter: String::new(),
+            selected: 0,
+            scroll: 0,
+            return_detail: matches!(self.mode, Mode::Detail),
+        });
+    }
+
+    pub fn note_move_picker_move(&mut self, delta: isize) {
+        if let Mode::NoteMovePicker(state) = &mut self.mode {
+            let n = state.targets.len() as isize;
+            if n == 0 {
+                return;
+            }
+            state.selected = ((((state.selected as isize + delta) % n) + n) % n) as usize;
+        }
+    }
+
+    /// Move the selected note into the highlighted notebook and persist.
+    pub fn note_move_picker_confirm(&mut self) {
+        let target = match &self.mode {
+            Mode::NoteMovePicker(state) => state.targets.get(state.selected).copied(),
+            _ => return,
+        };
+        let key = self.selected_note_entry_key();
+        let (Some(target), Some(r)) = (target, self.current_note_ref()) else {
+            self.mode = Mode::Normal;
+            return;
+        };
+        let src_slug = self.notebooks[r.notebook].slug.clone();
+        let mut note = self.notebooks[r.notebook].notes.remove(r.note);
+        let old_slug = note.slug.clone();
+        let title = note.title.clone();
+        let dest_slug = self.notebooks[target].slug.clone();
+        let dest_name = self.notebooks[target].name.clone();
+        note.slug = storage::unique_note_slug(&self.data_dir, &dest_slug, &title);
+        self.notebooks[target].notes.push(note);
+        let dest_idx = self.notebooks[target].notes.len() - 1;
+        self.save_note_at(target, dest_idx);
+        let _ = storage::delete_note_file(&self.data_dir, &src_slug, &old_slug);
+        self.reselect_notebook(key);
+        self.clamp_note_selection();
+        self.set_status(format!("moved \"{title}\" to {dest_name}"));
+        self.mode = Mode::Normal;
+    }
+
+    pub fn note_move_picker_cancel(&mut self) {
+        if let Mode::NoteMovePicker(state) = &self.mode {
+            self.mode = if state.return_detail {
+                Mode::Detail
+            } else {
+                Mode::Normal
+            };
+        }
+    }
+
+    // --- copy a note ---------------------------------------------------------
+
+    /// Open the copy menu for the selected note. No-op when there's no note.
+    pub fn start_note_copy(&mut self) {
+        if self.current_note().is_none() {
+            return;
+        }
+        self.mode = Mode::NoteCopyMenu(CopyMenuState {
+            selected: 0,
+            return_detail: matches!(self.mode, Mode::Detail),
+        });
+    }
+
+    pub fn note_copy_menu_move(&mut self, delta: isize) {
+        if let Mode::NoteCopyMenu(state) = &mut self.mode {
+            let n = NoteCopyWhat::all().len() as isize;
+            state.selected = ((((state.selected as isize + delta) % n) + n) % n) as usize;
+        }
+    }
+
+    /// The text a copy of `what` would place on the clipboard. Pure.
+    pub fn note_copy_payload(&self, what: NoteCopyWhat) -> Option<String> {
+        let note = self.current_note()?;
+        Some(match what {
+            NoteCopyWhat::Body => note.body.clone(),
+            NoteCopyWhat::Title => note.title.clone(),
+            NoteCopyWhat::Markdown => note.to_file_string(),
+        })
+    }
+
+    pub fn note_copy_menu_confirm(&mut self) {
+        if let Mode::NoteCopyMenu(state) = &self.mode {
+            self.note_copy_selected(NoteCopyWhat::all()[state.selected]);
+        }
+    }
+
+    /// Copy `what` from the selected note to the clipboard and close the menu.
+    pub fn note_copy_selected(&mut self, what: NoteCopyWhat) {
+        let return_detail = match &self.mode {
+            Mode::NoteCopyMenu(state) => state.return_detail,
+            _ => return,
+        };
+        self.mode = if return_detail {
+            Mode::Detail
+        } else {
+            Mode::Normal
+        };
+        let Some(text) = self.note_copy_payload(what) else {
+            self.set_status("nothing to copy".to_string());
+            return;
+        };
+        if what == NoteCopyWhat::Body && text.trim().is_empty() {
+            self.set_status("note has no body to copy".to_string());
+            return;
+        }
+        match crate::clipboard::copy(&text) {
+            Ok(()) => self.set_status(format!("copied {} to clipboard", what.noun())),
+            Err(e) => self.set_status(format!("copy failed: {e}")),
+        }
+    }
+
+    pub fn note_copy_menu_cancel(&mut self) {
+        if let Mode::NoteCopyMenu(state) = &self.mode {
+            self.mode = if state.return_detail {
+                Mode::Detail
+            } else {
+                Mode::Normal
+            };
+        }
+    }
+
+    // --- rendered read view + links ------------------------------------------
+
+    /// Open the full-screen rendered read view for the selected note.
+    pub fn open_note_view(&mut self) {
+        if self.current_note().is_some() {
+            self.mode = Mode::NoteView(NoteViewState::default());
+        }
+    }
+
+    /// Scroll the read view (clamped at the top; the bottom is clamped in the
+    /// renderer, which knows the wrapped height).
+    pub fn note_view_scroll(&mut self, delta: isize) {
+        if let Mode::NoteView(state) = &mut self.mode {
+            state.scroll = (state.scroll as isize + delta).max(0) as u16;
+        }
+    }
+
+    /// From the read view, drop into the raw editor for the same note.
+    pub fn note_view_edit(&mut self) {
+        if matches!(self.mode, Mode::NoteView(_)) {
+            self.start_edit_note_body();
+        }
+    }
+
+    /// Find a note by title (case-insensitive) across every notebook.
+    pub fn resolve_note_link(&self, title: &str) -> Option<NoteRef> {
+        let want = title.trim().to_lowercase();
+        for (ni, nb) in self.notebooks.iter().enumerate() {
+            for (ti, note) in nb.notes.iter().enumerate() {
+                if note.title.to_lowercase() == want {
+                    return Some(NoteRef {
+                        notebook: ni,
+                        note: ti,
+                    });
+                }
+            }
+        }
+        None
+    }
+
+    /// Notes that link to `title` via `[[title]]` (case-insensitive), excluding
+    /// the note at `exclude`.
+    pub fn note_backlinks(&self, title: &str, exclude: Option<NoteRef>) -> Vec<NoteRef> {
+        let want = title.trim().to_lowercase();
+        let mut out = Vec::new();
+        for (ni, nb) in self.notebooks.iter().enumerate() {
+            for (ti, note) in nb.notes.iter().enumerate() {
+                let here = NoteRef {
+                    notebook: ni,
+                    note: ti,
+                };
+                if Some(here) == exclude {
+                    continue;
+                }
+                if note.link_targets().iter().any(|t| t.to_lowercase() == want) {
+                    out.push(here);
+                }
+            }
+        }
+        out
+    }
+
+    /// Select the notebook + note at `r` and open its read view. Clears any note
+    /// search so the target is visible.
+    pub fn jump_to_note(&mut self, r: NoteRef) {
+        if r.notebook >= self.notebooks.len() || r.note >= self.notebooks[r.notebook].notes.len() {
+            return;
+        }
+        self.note_query.clear();
+        self.notes_focus = NotesFocus::Notes;
+        self.notebook_state.select(Some(r.notebook));
+        let pos = self
+            .visible_note_refs()
+            .iter()
+            .position(|&x| x == r)
+            .unwrap_or(0);
+        self.note_state.select(Some(pos));
+        self.open_note_view();
+    }
+
+    /// Open the link picker for the selected note: resolvable outgoing links
+    /// first, then backlinks. `return_view` remembers whether to fall back to the
+    /// read view on cancel.
+    pub fn start_note_link_picker(&mut self, return_view: bool) {
+        let Some(r) = self.current_note_ref() else {
+            return;
+        };
+        let note = &self.notebooks[r.notebook].notes[r.note];
+        let mut entries: Vec<NoteLinkEntry> = Vec::new();
+        for target in note.link_targets() {
+            if let Some(dest) = self.resolve_note_link(&target)
+                && dest != r
+            {
+                entries.push(NoteLinkEntry {
+                    label: format!(
+                        "\u{2192} {}",
+                        self.notebooks[dest.notebook].notes[dest.note].title
+                    ),
+                    target: dest,
+                });
+            }
+        }
+        let title = note.title.clone();
+        for back in self.note_backlinks(&title, Some(r)) {
+            entries.push(NoteLinkEntry {
+                label: format!(
+                    "\u{2190} {} (backlink)",
+                    self.notebooks[back.notebook].notes[back.note].title
+                ),
+                target: back,
+            });
+        }
+        if entries.is_empty() {
+            self.set_status("no links in or to this note".to_string());
+            return;
+        }
+        self.mode = Mode::NoteLinkPicker(NoteLinkPickerState {
+            entries,
+            selected: 0,
+            return_view,
+        });
+    }
+
+    pub fn note_link_picker_move(&mut self, delta: isize) {
+        if let Mode::NoteLinkPicker(state) = &mut self.mode {
+            let n = state.entries.len() as isize;
+            if n == 0 {
+                return;
+            }
+            state.selected = ((((state.selected as isize + delta) % n) + n) % n) as usize;
+        }
+    }
+
+    pub fn note_link_picker_confirm(&mut self) {
+        let target = match &self.mode {
+            Mode::NoteLinkPicker(state) => state.entries.get(state.selected).map(|e| e.target),
+            _ => return,
+        };
+        if let Some(r) = target {
+            self.jump_to_note(r);
+        }
+    }
+
+    pub fn note_link_picker_cancel(&mut self) {
+        if let Mode::NoteLinkPicker(state) = &self.mode {
+            if state.return_view {
+                self.open_note_view();
+            } else {
+                self.mode = Mode::Normal;
+            }
+        }
+    }
+
+    // --- reorder notes -------------------------------------------------------
+
+    /// Reordering only makes sense under `NoteSort::Manual`; returns true (after
+    /// a hint) when it should be refused.
+    fn note_reorder_blocked(&mut self) -> bool {
+        if self.note_sort != NoteSort::Manual {
+            self.set_status("reordering needs manual sort (press o)".to_string());
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn reorder_note(&mut self, delta: isize) {
+        if self.notes_focus != NotesFocus::Notes || matches!(self.mode, Mode::Detail) {
+            return;
+        }
+        let Some(ni) = self.selected_notebook_index() else {
+            self.set_status("reordering works inside a single notebook".to_string());
+            return;
+        };
+        if self.note_reorder_blocked() {
+            return;
+        }
+        let vis = self.visible_note_refs();
+        let v = self.selected_visible_note();
+        let target = v as isize + delta;
+        if target < 0 || target >= vis.len() as isize {
+            return;
+        }
+        let target = target as usize;
+        self.notebooks[ni].notes.swap(vis[v].note, vis[target].note);
+        self.renumber_notes(ni);
+        self.note_state.select(Some(target));
+    }
+
+    pub fn send_note(&mut self, to_top: bool) {
+        if self.notes_focus != NotesFocus::Notes || matches!(self.mode, Mode::Detail) {
+            return;
+        }
+        let Some(ni) = self.selected_notebook_index() else {
+            self.set_status("reordering works inside a single notebook".to_string());
+            return;
+        };
+        if self.note_reorder_blocked() {
+            return;
+        }
+        let vis = self.visible_note_refs();
+        if vis.len() < 2 {
+            return;
+        }
+        let Some(from) = vis.get(self.selected_visible_note()).map(|r| r.note) else {
+            return;
+        };
+        // Pinned notes always float to the top, so a note only travels within its
+        // own pinned/unpinned group — sending it past that edge just gets undone
+        // by the next re-float. Anchor the move to the far edge of the note's
+        // group (the first/last visible note sharing its pinned state).
+        let from_pinned = self.notebooks[ni].notes[from].pinned;
+        let same_group =
+            |r: &NoteRef| self.notebooks[r.notebook].notes[r.note].pinned == from_pinned;
+        let dest_ref = if to_top {
+            vis.iter().find(|r| r.note != from && same_group(r))
+        } else {
+            vis.iter().rev().find(|r| r.note != from && same_group(r))
+        }
+        .map(|r| r.note);
+        // Sole member of its group: nothing to move past, so leave it put.
+        let Some(dest_ref) = dest_ref else {
+            return;
+        };
+        let note = self.notebooks[ni].notes.remove(from);
+        // `dest_ref` was a raw index before the splice; shift it down if it sat
+        // after `from`, then land just past it for a sink or just before it for a
+        // hoist.
+        let ref_adj = if dest_ref > from { dest_ref - 1 } else { dest_ref };
+        let insert_at = if to_top { ref_adj } else { ref_adj + 1 };
+        self.notebooks[ni].notes.insert(insert_at, note);
+        self.renumber_notes(ni);
+        // The re-float can drop the note anywhere in the view, so select it by its
+        // new stored index rather than assuming the first/last visible slot.
+        if let Some(pos) = self
+            .visible_note_refs()
+            .iter()
+            .position(|r| r.notebook == ni && r.note == insert_at)
+        {
+            self.note_state.select(Some(pos));
+        }
+    }
+
+    // --- search --------------------------------------------------------------
+
+    pub fn set_note_search(&mut self, query: String) {
+        self.note_query = query;
+        self.clamp_note_selection();
+    }
+
+    pub fn clear_note_filter(&mut self) {
+        self.note_query.clear();
+        self.clamp_note_selection();
+    }
+
+    pub fn note_filter_active(&self) -> bool {
+        !self.note_query.is_empty()
+    }
+
+    // --- note sort picker ----------------------------------------------------
+
+    pub fn open_note_sort_picker(&mut self) {
+        let selected = NoteSort::all()
+            .iter()
+            .position(|&s| s == self.note_sort)
+            .unwrap_or(0);
+        self.mode = Mode::NoteSortPicker(SortPickerState {
+            selected,
+            return_detail: matches!(self.mode, Mode::Detail),
+        });
+    }
+
+    pub fn note_sort_picker_move(&mut self, delta: isize) {
+        if let Mode::NoteSortPicker(state) = &mut self.mode {
+            let n = NoteSort::all().len() as isize;
+            state.selected = ((((state.selected as isize + delta) % n) + n) % n) as usize;
+        }
+    }
+
+    pub fn note_sort_picker_confirm(&mut self) {
+        if let Mode::NoteSortPicker(state) = &self.mode {
+            let sort = NoteSort::all()[state.selected];
+            self.finish_note_sort_picker();
+            self.set_note_sort(sort);
+        }
+    }
+
+    pub fn note_sort_picker_select(&mut self, idx: usize) {
+        let all = NoteSort::all();
+        if idx < all.len() && matches!(self.mode, Mode::NoteSortPicker(_)) {
+            self.finish_note_sort_picker();
+            self.set_note_sort(all[idx]);
+        }
+    }
+
+    pub fn toggle_note_sort_dir(&mut self) {
+        let current = self.current_note_ref();
+        self.note_sort_dir = self.note_sort_dir.toggle();
+        self.keep_note_selected(current);
+        if self.note_sort == NoteSort::Manual {
+            self.set_status(format!(
+                "sort direction: {} (pick a sort to apply)",
+                self.note_sort_dir.label()
+            ));
+        } else {
+            self.announce_note_sort();
+        }
+    }
+
+    pub fn note_sort_picker_cancel(&mut self) {
+        if matches!(self.mode, Mode::NoteSortPicker(_)) {
+            self.finish_note_sort_picker();
+        }
+    }
+
+    fn finish_note_sort_picker(&mut self) {
+        if let Mode::NoteSortPicker(state) = &self.mode {
+            self.mode = if state.return_detail {
+                Mode::Detail
+            } else {
+                Mode::Normal
+            };
+        }
+    }
+
+    pub fn set_note_sort(&mut self, sort: NoteSort) {
+        let current = self.current_note_ref();
+        self.note_sort = sort;
+        self.keep_note_selected(current);
+        self.announce_note_sort();
+    }
+
+    fn announce_note_sort(&mut self) {
+        if self.note_sort == NoteSort::Manual {
+            self.set_status(format!("sorted by {}", self.note_sort.label()));
+        } else {
+            self.set_status(format!(
+                "sorted by {} {}",
+                self.note_sort.label(),
+                self.note_sort_dir.arrow()
+            ));
+        }
+    }
+
+    // --- external editor -----------------------------------------------------
+
+    /// Request that the run loop open the selected note in `$EDITOR`. The file is
+    /// flushed to disk first so the editor sees the current content.
+    pub fn open_note_in_editor(&mut self) {
+        let Some(r) = self.current_note_ref() else {
+            self.set_status("select a note to edit".to_string());
+            return;
+        };
+        let nb_slug = self.notebooks[r.notebook].slug.clone();
+        let note_slug = self.notebooks[r.notebook].notes[r.note].slug.clone();
+        self.save_note_at(r.notebook, r.note);
+        self.pending_editor = Some(storage::note_path(&self.data_dir, &nb_slug, &note_slug));
+    }
+
+    /// Take the pending external-edit request, if any (called by the run loop).
+    pub fn take_pending_editor(&mut self) -> Option<PathBuf> {
+        self.pending_editor.take()
+    }
+
+    /// Reload the selected note's content from disk after an external edit.
+    pub fn reload_current_note_from_disk(&mut self) {
+        let Some(r) = self.current_note_ref() else {
+            return;
+        };
+        let nb_slug = self.notebooks[r.notebook].slug.clone();
+        let note_slug = self.notebooks[r.notebook].notes[r.note].slug.clone();
+        let path = storage::note_path(&self.data_dir, &nb_slug, &note_slug);
+        match storage::load_note(&path) {
+            Ok(mut note) => {
+                note.slug = note_slug;
+                if let Some(n) = self
+                    .notebooks
+                    .get_mut(r.notebook)
+                    .and_then(|nb| nb.notes.get_mut(r.note))
+                {
+                    *n = note;
+                }
+            }
+            Err(_) => { /* file may have been removed in the editor; leave as-is */ }
+        }
+    }
+
+    // --- starting note input/confirm modes -----------------------------------
+
+    pub fn start_add_notebook(&mut self) {
+        self.mode = Mode::Input(InputState::new(
+            InputField::NewNotebook,
+            "New notebook name",
+            String::new(),
+            false,
+            false,
+        ));
+    }
+
+    pub fn start_rename_notebook(&mut self) {
+        let Some(nb) = self.current_notebook() else {
+            return;
+        };
+        if nb.is_archive() {
+            self.set_status("the Archived notebook can't be renamed".to_string());
+            return;
+        }
+        let name = nb.name.clone();
+        self.mode = Mode::Input(InputState::new(
+            InputField::RenameNotebook,
+            "Rename notebook",
+            name,
+            false,
+            false,
+        ));
+    }
+
+    pub fn start_add_note(&mut self) {
+        if self.notebooks.is_empty() {
+            self.set_status("create a notebook first (A)".to_string());
+            return;
+        }
+        if self.selected_notebook_index().is_none() {
+            self.set_status("select a notebook to add a note".to_string());
+            return;
+        }
+        self.mode = Mode::Input(InputState::new(
+            InputField::NewNote,
+            "New note  ·  title #tag #tag",
+            String::new(),
+            false,
+            false,
+        ));
+    }
+
+    /// `e` on the Notes tab: rename the notebook (notebooks pane) or edit the
+    /// note title (notes pane / full-screen view).
+    pub fn start_edit_note(&mut self) {
+        if self.notes_focus == NotesFocus::Notebooks && !matches!(self.mode, Mode::Detail) {
+            if self.selected_notebook_index().is_none() {
+                self.set_status("tags follow your notes — nothing to rename here".to_string());
+                return;
+            }
+            self.start_rename_notebook();
+            return;
+        }
+        let Some(note) = self.current_note() else {
+            return;
+        };
+        let title = note.title.clone();
+        self.mode = Mode::Input(InputState::new(
+            InputField::EditNote,
+            "Edit note title",
+            title,
+            false,
+            matches!(self.mode, Mode::Detail),
+        ));
+    }
+
+    pub fn start_edit_note_body(&mut self) {
+        let Some(note) = self.current_note() else {
+            return;
+        };
+        let body = note.body.clone();
+        self.mode = Mode::Input(InputState::new(
+            InputField::NoteBody,
+            "Note body (Enter = newline, Ctrl+S save, Esc cancel)",
+            body,
+            true,
+            matches!(self.mode, Mode::Detail),
+        ));
+    }
+
+    pub fn start_set_note_tags(&mut self) {
+        let Some(note) = self.current_note() else {
+            return;
+        };
+        let buffer = note.tags.join(", ");
+        self.mode = Mode::Input(InputState::new(
+            InputField::NoteTags,
+            "Tags (comma or space separated; empty clears)",
+            buffer,
+            false,
+            matches!(self.mode, Mode::Detail),
+        ));
+    }
+
+    pub fn start_note_search(&mut self) {
+        self.mode = Mode::Input(InputState::new(
+            InputField::NoteSearch,
+            "Search notes (title, body, tags)",
+            self.note_query.clone(),
+            false,
+            matches!(self.mode, Mode::Detail),
+        ));
+    }
+
+    pub fn start_delete_note(&mut self) {
+        if self.notes_focus == NotesFocus::Notebooks && !matches!(self.mode, Mode::Detail) {
+            let Some(nb) = self.current_notebook() else {
+                self.set_status("tags can't be deleted — clear the tag from its notes".to_string());
+                return;
+            };
+            if nb.is_archive() {
+                self.set_status("the Archived notebook can't be deleted".to_string());
+                return;
+            }
+            let name = nb.name.clone();
+            let n = nb.notes.len();
+            self.mode = Mode::Confirm(ConfirmState {
+                prompt: format!("Delete notebook \"{name}\" and its {n} note(s)?"),
+                action: ConfirmAction::DeleteNotebook,
+                return_detail: false,
+            });
+            return;
+        }
+        let Some(note) = self.current_note() else {
+            return;
+        };
+        let title = note.title.clone();
+        self.mode = Mode::Confirm(ConfirmState {
+            prompt: format!("Permanently delete \"{title}\"?"),
+            action: ConfirmAction::DeleteNote,
+            return_detail: matches!(self.mode, Mode::Detail),
+        });
+    }
+
     // --- first run -----------------------------------------------------------
 
     pub fn commit_first_run(&mut self, dir: PathBuf) {
@@ -2153,6 +3970,7 @@ impl App {
                 self.lists = Vec::new();
             }
         }
+        self.notebooks = storage::load_notebooks(&self.data_dir).unwrap_or_default();
         if self.lists.is_empty() {
             let mut list = List::new("Tasks");
             list.slug = "tasks".to_string();

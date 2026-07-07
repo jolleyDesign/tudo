@@ -32,6 +32,7 @@ pub type Overrides = BTreeMap<String, Vec<String>>;
 pub enum Action {
     // Navigate
     ToggleFocus,
+    ToggleSidebarPane,
     FocusLists,
     FocusTasks,
     FocusTags,
@@ -68,12 +69,18 @@ pub enum Action {
     Settings,
     Help,
     Quit,
+    // Tabs & notes
+    SwitchToTasks,
+    SwitchToNotes,
+    TogglePin,
+    ExternalEdit,
 }
 
 impl Action {
     /// All actions, in canonical order.
-    pub const ALL: [Action; 33] = [
+    pub const ALL: [Action; 38] = [
         Action::ToggleFocus,
+        Action::ToggleSidebarPane,
         Action::FocusLists,
         Action::FocusTasks,
         Action::FocusTags,
@@ -106,12 +113,17 @@ impl Action {
         Action::Settings,
         Action::Help,
         Action::Quit,
+        Action::SwitchToTasks,
+        Action::SwitchToNotes,
+        Action::TogglePin,
+        Action::ExternalEdit,
     ];
 
     /// The kebab-case name used as the config key for this action.
     pub fn config_name(self) -> &'static str {
         match self {
             Action::ToggleFocus => "toggle-focus",
+            Action::ToggleSidebarPane => "toggle-sidebar-pane",
             Action::FocusLists => "focus-lists",
             Action::FocusTasks => "focus-tasks",
             Action::FocusTags => "focus-tags",
@@ -144,6 +156,10 @@ impl Action {
             Action::Settings => "settings",
             Action::Help => "help",
             Action::Quit => "quit",
+            Action::SwitchToTasks => "switch-to-tasks",
+            Action::SwitchToNotes => "switch-to-notes",
+            Action::TogglePin => "toggle-pin",
+            Action::ExternalEdit => "external-edit",
         }
     }
 
@@ -166,6 +182,9 @@ impl Action {
                 c(KeyCode::BackTab),
                 KeyChord::new(KeyCode::Tab, KeyModifiers::SHIFT),
             ],
+            // Flip between the two sidebar panes (lists ⇄ tags) without walking
+            // the cursor through every list in between.
+            Action::ToggleSidebarPane => vec![c(KeyCode::Char('\\'))],
             Action::FocusLists => vec![c(KeyCode::Char('h')), c(KeyCode::Left)],
             Action::FocusTasks => vec![c(KeyCode::Char('l')), c(KeyCode::Right)],
             Action::FocusTags => vec![c(KeyCode::Char('#'))],
@@ -204,6 +223,10 @@ impl Action {
             Action::Settings => vec![c(KeyCode::Char('S'))],
             Action::Help => vec![c(KeyCode::Char('?'))],
             Action::Quit => vec![c(KeyCode::Char('q'))],
+            Action::SwitchToTasks => vec![c(KeyCode::Char('1'))],
+            Action::SwitchToNotes => vec![c(KeyCode::Char('2'))],
+            Action::TogglePin => vec![c(KeyCode::Char('*'))],
+            Action::ExternalEdit => vec![c(KeyCode::Char('E'))],
         }
     }
 }

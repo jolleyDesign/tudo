@@ -3,7 +3,7 @@
 use std::io::{self, Stdout};
 use std::time::Instant;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use ratatui::crossterm::event::{DisableMouseCapture, EnableMouseCapture, Event, poll, read};
@@ -94,8 +94,39 @@ fn run(terminal: &mut Term, app: &mut App) -> Result<()> {
                 _ => {}
             }
         }
+        // A note asked to be opened in $EDITOR: suspend the TUI, run the editor,
+        // then resume and reload the note from disk.
+        if let Some(path) = app.take_pending_editor() {
+            if let Err(e) = edit_in_editor(terminal, &path) {
+                app.set_status(format!("editor failed: {e}"));
+            }
+            app.reload_current_note_from_disk();
+        }
         app.expire_status(Instant::now());
     }
+    Ok(())
+}
+
+/// Suspend the TUI, open `path` in `$VISUAL`/`$EDITOR` (falling back to `vi`),
+/// then re-enter the alternate screen. The editor string is split on whitespace
+/// so wrappers like `code -w` or `emacsclient -nw` work.
+fn edit_in_editor(terminal: &mut Term, path: &std::path::Path) -> Result<()> {
+    let editor = std::env::var("VISUAL")
+        .or_else(|_| std::env::var("EDITOR"))
+        .unwrap_or_else(|_| "vi".to_string());
+    let mut parts = editor.split_whitespace();
+    let cmd = parts.next().unwrap_or("vi").to_string();
+    let args: Vec<&str> = parts.collect();
+
+    restore_terminal(terminal)?;
+    let result = std::process::Command::new(&cmd)
+        .args(&args)
+        .arg(path)
+        .status();
+    // Re-enter the alternate screen regardless of how the editor exited.
+    *terminal = setup_terminal()?;
+    terminal.clear()?;
+    result.with_context(|| format!("running editor \"{editor}\""))?;
     Ok(())
 }
 
