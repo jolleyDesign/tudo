@@ -11,7 +11,7 @@
 use std::path::PathBuf;
 
 use chrono::{Days, Local, NaiveDate};
-use tudo::model::{List, Priority, Subtask, Task};
+use tudo::model::{List, Note, Priority, Subtask, Task};
 use tudo::storage;
 
 fn main() {
@@ -23,15 +23,34 @@ fn main() {
     std::fs::create_dir_all(&dir).expect("create demo dir");
     let today = Local::now().date_naive();
 
-    let lists = build_lists(today);
+    let mut lists = build_lists(today);
+    // Pin the sidebar order (Work first) so the demo opens on the richest list.
+    for (i, list) in lists.iter_mut().enumerate() {
+        list.order = Some(i as u32);
+    }
     for list in &lists {
         storage::save_list(&dir, list).expect("save list");
     }
 
+    // Notebooks + notes (the markdown side of the app). Saved in the same
+    // on-disk shape the app loads: one folder per notebook, one `.md` per note.
+    let notebooks = build_notebooks();
+    let mut order = Vec::new();
+    for (name, notes) in &notebooks {
+        let slug = storage::sanitize_notebook_name(name);
+        for note in notes {
+            storage::save_note(&dir, &slug, note).expect("save note");
+        }
+        order.push(slug);
+    }
+    storage::save_notebook_order(&dir, &order).expect("save notebook order");
+
     let tasks: usize = lists.iter().map(|l| l.tasks.len()).sum();
+    let notes: usize = notebooks.iter().map(|(_, n)| n.len()).sum();
     println!(
-        "Seeded {} lists ({tasks} tasks) into {}",
+        "Seeded {} lists ({tasks} tasks), {} notebooks ({notes} notes) into {}",
         lists.len(),
+        notebooks.len(),
         dir.display()
     );
     println!("Record with:  TUDO_DIR={} cargo run", dir.display());
@@ -94,6 +113,13 @@ fn build_lists(today: NaiveDate) -> Vec<List> {
                 )
                 .points(13)
                 .note("Split nav_key into per-mode handlers; it's getting long."),
+                task(
+                    "Renew the domain + TLS cert",
+                    Some(Priority::Medium),
+                    d(20),
+                    &["admin"],
+                )
+                .note("Auto-renew is on, but double-check the card on file hasn't expired."),
                 done(task("Update the README screenshots", None, None, &["docs"])),
                 done(task(
                     "Reply to the user feedback thread",
@@ -214,6 +240,183 @@ fn build_lists(today: NaiveDate) -> Vec<List> {
             ],
         ),
     ]
+}
+
+// --- notebooks + notes -------------------------------------------------------
+
+/// Curated notebooks for the demo. Returns `(notebook name, notes)` in the
+/// sidebar order we want (Project first). Notes wiki-link to each other so the
+/// follow-link picker and "Linked from" backlinks have something to show.
+fn build_notebooks() -> Vec<(&'static str, Vec<Note>)> {
+    vec![
+        (
+            "Project",
+            vec![
+                note(
+                    "Release plan",
+                    &["release", "rust"],
+                    true,
+                    0,
+                    "\
+Cut **v1.1.0** once CI is green and the changelog reads well. Tag from `main`, \
+build the binaries, then announce.
+
+## Checklist
+
+- [x] Finalise the changelog
+- [x] Bump the version in `Cargo.toml`
+- [ ] Tag and build the release binaries
+- [ ] Re-record the README demo
+- [ ] Announce on the forum
+
+## Notes
+
+> Lead the release notes with the two headline features: the Notes tab and the \
+global tag view.
+
+Design decisions live in [[Architecture]]; the write-up is in [[Retro - v1.0]].",
+                ),
+                note(
+                    "Architecture",
+                    &["rust", "backend"],
+                    false,
+                    1,
+                    "\
+The core stays terminal-free so it can be tested without a real TTY.
+
+## Layers
+
+- `model` - plain data types (tasks, notes, lists)
+- `storage` - atomic JSON + markdown I/O
+- `app` - state and actions
+- `ui` - ratatui rendering
+
+Every keypress routes through one action enum, which is what keeps the keymap \
+fully configurable.
+
+Back to the plan in [[Release plan]].",
+                ),
+                note(
+                    "Retro - v1.0",
+                    &["review"],
+                    false,
+                    2,
+                    "\
+What went well, and what to change next time.
+
+## Went well
+
+- Shipped the TUI end to end
+- Headless render tests caught real regressions early
+
+## Change next time
+
+- Start the README demo sooner
+- Smaller, more frequent releases
+
+Follows up on [[Release plan]].",
+                ),
+            ],
+        ),
+        (
+            "Trip to Tokyo",
+            vec![
+                note(
+                    "Itinerary",
+                    &["travel"],
+                    true,
+                    0,
+                    "\
+Two weeks, mostly Tokyo and Kyoto, with a slow first day to beat the jet lag.
+
+## Rough plan
+
+- Days 1-5: Tokyo
+- Days 6-9: [[Kyoto]]
+- Days 10-14: back to Tokyo
+
+## Todo
+
+- [x] Book the flights
+- [ ] Reserve the ryokan
+- [ ] Buy the JR Pass",
+                ),
+                note(
+                    "Kyoto",
+                    &["travel"],
+                    false,
+                    1,
+                    "\
+Temples in the morning, food in the evening.
+
+- Fushimi Inari at sunrise, before the crowds
+- Arashiyama bamboo grove
+- Nishiki market for lunch
+
+Back to the plan in [[Itinerary]].",
+                ),
+                note(
+                    "Useful phrases",
+                    &["language"],
+                    false,
+                    2,
+                    "\
+A few basics to learn on the flight.
+
+- konnichiwa - hello
+- arigatou - thank you
+- sumimasen - excuse me / sorry
+- onegaishimasu - please",
+                ),
+            ],
+        ),
+        (
+            "Journal",
+            vec![
+                note(
+                    "This week",
+                    &[],
+                    true,
+                    0,
+                    "\
+Shipping the notes feature and re-recording the demo.
+
+## Focus
+
+- Polish the Notes tab
+- Re-record the README demo
+- Reply to the feedback thread
+
+> Plain markdown, plain files - grep and git still work.",
+                ),
+                note(
+                    "Reading log",
+                    &["reading"],
+                    false,
+                    1,
+                    "\
+## Now
+
+- *Crafting Interpreters* - up to the bytecode VM
+- *Project Hail Mary* - most evenings
+
+## Next
+
+- *Designing Data-Intensive Applications*",
+                ),
+            ],
+        ),
+    ]
+}
+
+fn note(title: &str, tags: &[&str], pinned: bool, order: u32, body: &str) -> Note {
+    let mut n = Note::new(title);
+    n.slug = storage::slugify(title);
+    n.tags = tags.iter().map(|s| s.to_string()).collect();
+    n.pinned = pinned;
+    n.order = Some(order);
+    n.body = body.to_string();
+    n
 }
 
 // --- tiny builders ----------------------------------------------------------

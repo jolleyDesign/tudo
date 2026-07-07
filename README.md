@@ -2,7 +2,7 @@
 
 A fast, local-first todo list **and markdown notebook** for your terminal. Fully keyboard-driven (with mouse support), no cloud, no accounts - your tasks are plain JSON files and your notes are plain `.md` files on your own disk.
 
-![tudo demo](v1.0.5-tudo-demo.gif)
+![tudo demo](v1.1.0-tudo-demo.gif)
 
 ## Features
 
