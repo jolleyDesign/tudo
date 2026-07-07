@@ -361,6 +361,60 @@ fn reorder_and_send_task_within_list_persists() {
 }
 
 #[test]
+fn send_task_keeps_selection_and_stays_in_group_under_sink() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app_in(dir.path());
+    app.add_list("L".to_string());
+    app.add_task("a".to_string());
+    app.add_task("b".to_string());
+    app.add_task("c".to_string());
+    app.add_task("d".to_string());
+
+    // Display order in the tasks pane.
+    let visible_titles = |app: &App| -> Vec<String> {
+        let list = app.current_list().unwrap();
+        app.visible_task_indices()
+            .iter()
+            .map(|&i| list.tasks[i].title.clone())
+            .collect()
+    };
+
+    // Mark "b" and "d" done, then sink completed tasks: display is [a, c, b, d]
+    // (incomplete first, done floated to the bottom).
+    app.select_task_visible(1);
+    app.toggle_current_done();
+    app.select_task_visible(3);
+    app.toggle_current_done();
+    app.set_completed_to_bottom(true);
+    assert_eq!(visible_titles(&app), ["a", "c", "b", "d"]);
+
+    // Send incomplete "a" (top of its group) to the bottom. It can only reach
+    // the bottom of the incomplete group — the done tasks re-sink below it — so
+    // it lands last among incompletes, and the cursor follows it there.
+    app.select_task_visible(0);
+    app.send_task(false);
+    assert_eq!(visible_titles(&app), ["c", "a", "b", "d"]);
+    assert_eq!(app.current_task().unwrap().title, "a");
+
+    // Send done "b" (top of the done group) to the bottom of that group: after
+    // "d". Cursor stays on the moved task.
+    app.select_task_visible(2);
+    app.send_task(false);
+    assert_eq!(visible_titles(&app), ["c", "a", "d", "b"]);
+    assert_eq!(app.current_task().unwrap().title, "b");
+
+    // Hoisting done "b" to the top of its group puts it first among done tasks
+    // (still below every incomplete task), cursor following.
+    app.send_task(true);
+    assert_eq!(visible_titles(&app), ["c", "a", "b", "d"]);
+    assert_eq!(app.current_task().unwrap().title, "b");
+
+    // Turning sink off reveals the underlying stored order is intact and valid.
+    app.set_completed_to_bottom(false);
+    assert_eq!(visible_titles(&app), ["c", "a", "b", "d"]);
+}
+
+#[test]
 fn reorder_task_steps_past_hidden_tasks_under_filter() {
     let dir = tempfile::tempdir().unwrap();
     let mut app = app_in(dir.path());

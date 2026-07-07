@@ -1852,23 +1852,49 @@ impl App {
         if vis.len() < 2 {
             return;
         }
-        let from = vis[self.selected_visible_task()].task;
-        // Insertion point (raw index) once `from` is spliced out: the current
-        // first visible slot for a hoist, the current last for a sink. Both stay
-        // valid after the removal because `from` lies within [first, last].
-        let dest = if to_top {
-            vis[0].task
+        let Some(from) = vis.get(self.selected_visible_task()).map(|r| r.task) else {
+            return;
+        };
+        // With "sink completed" on, the display re-sorts done tasks to the bottom
+        // after every edit, so a task can only travel within its own done-group —
+        // sending it past that edge just gets undone by the next re-sink. Anchor
+        // the move to the far edge of that group (the first/last visible task
+        // sharing the selection's done state); without sinking every visible task
+        // qualifies, so this collapses to the plain first/last visible task.
+        let from_done = self.lists[li].tasks[from].done;
+        let sink = self.completed_to_bottom;
+        let same_group =
+            |r: &TaskRef| !sink || self.lists[r.list].tasks[r.task].done == from_done;
+        let dest_ref = if to_top {
+            vis.iter().find(|r| r.task != from && same_group(r))
         } else {
-            vis.last().unwrap().task
+            vis.iter().rev().find(|r| r.task != from && same_group(r))
+        }
+        .map(|r| r.task);
+        // Sole member of its group: nothing to move past, so leave it put.
+        let Some(dest_ref) = dest_ref else {
+            return;
         };
         let Some(list) = self.lists.get_mut(li) else {
             return;
         };
         let task = list.tasks.remove(from);
-        list.tasks.insert(dest, task);
+        // `dest_ref` was a raw index before the splice; shift it down if it sat
+        // after `from`, then land just past it for a sink or just before it for a
+        // hoist.
+        let ref_adj = if dest_ref > from { dest_ref - 1 } else { dest_ref };
+        let insert_at = if to_top { ref_adj } else { ref_adj + 1 };
+        list.tasks.insert(insert_at, task);
         self.save_list_at(li);
-        self.task_state
-            .select(Some(if to_top { 0 } else { vis.len() - 1 }));
+        // The re-sink can drop the task anywhere in the view, so select it by its
+        // new stored index rather than assuming the first/last visible slot.
+        if let Some(pos) = self
+            .visible_task_refs()
+            .iter()
+            .position(|r| r.list == li && r.task == insert_at)
+        {
+            self.task_state.select(Some(pos));
+        }
     }
 
     // --- move a task to another list -----------------------------------------
@@ -3596,17 +3622,43 @@ impl App {
         if vis.len() < 2 {
             return;
         }
-        let from = vis[self.selected_visible_note()].note;
-        let dest = if to_top {
-            vis[0].note
+        let Some(from) = vis.get(self.selected_visible_note()).map(|r| r.note) else {
+            return;
+        };
+        // Pinned notes always float to the top, so a note only travels within its
+        // own pinned/unpinned group — sending it past that edge just gets undone
+        // by the next re-float. Anchor the move to the far edge of the note's
+        // group (the first/last visible note sharing its pinned state).
+        let from_pinned = self.notebooks[ni].notes[from].pinned;
+        let same_group =
+            |r: &NoteRef| self.notebooks[r.notebook].notes[r.note].pinned == from_pinned;
+        let dest_ref = if to_top {
+            vis.iter().find(|r| r.note != from && same_group(r))
         } else {
-            vis.last().unwrap().note
+            vis.iter().rev().find(|r| r.note != from && same_group(r))
+        }
+        .map(|r| r.note);
+        // Sole member of its group: nothing to move past, so leave it put.
+        let Some(dest_ref) = dest_ref else {
+            return;
         };
         let note = self.notebooks[ni].notes.remove(from);
-        self.notebooks[ni].notes.insert(dest, note);
+        // `dest_ref` was a raw index before the splice; shift it down if it sat
+        // after `from`, then land just past it for a sink or just before it for a
+        // hoist.
+        let ref_adj = if dest_ref > from { dest_ref - 1 } else { dest_ref };
+        let insert_at = if to_top { ref_adj } else { ref_adj + 1 };
+        self.notebooks[ni].notes.insert(insert_at, note);
         self.renumber_notes(ni);
-        self.note_state
-            .select(Some(if to_top { 0 } else { vis.len() - 1 }));
+        // The re-float can drop the note anywhere in the view, so select it by its
+        // new stored index rather than assuming the first/last visible slot.
+        if let Some(pos) = self
+            .visible_note_refs()
+            .iter()
+            .position(|r| r.notebook == ni && r.note == insert_at)
+        {
+            self.note_state.select(Some(pos));
+        }
     }
 
     // --- search --------------------------------------------------------------
