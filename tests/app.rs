@@ -2,7 +2,6 @@
 
 use std::path::PathBuf;
 
-use crossterm::ExecutableCommand;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
 use tudo::app::{
     App, CopyWhat, Focus, InputField, Mode, NoteCopyWhat, NoteSidebarRow, NoteView, NotesFocus,
