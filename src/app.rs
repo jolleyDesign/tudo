@@ -300,6 +300,7 @@ pub enum ConfirmAction {
     DeleteSubtask,
     DeleteNote,
     DeleteNotebook,
+    DeleteDoneTasks,
 }
 
 #[derive(Debug, Clone)]
@@ -1606,6 +1607,23 @@ impl App {
         self.clamp_task_selection();
     }
 
+    pub fn delete_done_tasks(&mut self) {
+        let i = self.selected_list();
+
+        let Some(l) = self.lists.get_mut(i) else
+        {
+            return;
+        };
+
+        l.tasks = l.tasks
+            .iter()
+            .filter(|t| !t.done)
+            .map(|t| t.clone())
+            .collect();
+
+        self.save_list_at(i);
+    }
+
     pub fn delete_current_list(&mut self) {
         let Some(li) = self.selected_list_index() else {
             return;
@@ -2522,6 +2540,14 @@ impl App {
                 });
             }
         }
+    }
+
+    pub fn start_delete_done_tasks(&mut self) {
+        self.mode = Mode::Confirm(ConfirmState {
+            prompt: "Are you sure you want to delete all done tasks in this list?".to_string(),
+            action: ConfirmAction::DeleteDoneTasks,
+            return_detail: false,
+        });
     }
 
     /// Toggle done for whatever is selected given the current mode.

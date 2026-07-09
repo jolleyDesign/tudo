@@ -1930,7 +1930,7 @@ fn primary_key(app: &App, action: Action) -> String {
 }
 
 fn render_help(f: &mut Frame, app: &App) {
-    let area = centered_rect_cols(f.area(), 68, 24);
+    let area = centered_rect_cols(f.area(), 76, 24);
     overlay_clear(f, area);
     let block = overlay_block(
         &format!("Keybindings · {}", app.active_tab.label()),
@@ -2040,6 +2040,7 @@ fn render_help(f: &mut Frame, app: &App) {
                 header("Remove"),
                 row(&keys_for(app, &[Action::Archive]), "archive task", RW),
                 row(&keys_for(app, &[Action::Delete]), "delete (confirm)", RW),
+                row(&keys_for(app, &[Action::DeleteDoneTasks]), "delete done tasks (confirm)", RW),
                 Line::raw(""),
                 header("App"),
                 row(&keys_for(app, &[Action::ThemePicker]), "theme", RW),

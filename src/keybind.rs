@@ -60,6 +60,7 @@ pub enum Action {
     // Remove
     Archive,
     Delete,
+    DeleteDoneTasks,
     // Find & app
     Search,
     CycleFilter,
@@ -78,7 +79,7 @@ pub enum Action {
 
 impl Action {
     /// All actions, in canonical order.
-    pub const ALL: [Action; 38] = [
+    pub const ALL: [Action; 39] = [
         Action::ToggleFocus,
         Action::ToggleSidebarPane,
         Action::FocusLists,
@@ -105,6 +106,7 @@ impl Action {
         Action::SetNotes,
         Action::Archive,
         Action::Delete,
+        Action::DeleteDoneTasks,
         Action::Search,
         Action::CycleFilter,
         Action::SortPicker,
@@ -148,6 +150,7 @@ impl Action {
             Action::SetNotes => "set-notes",
             Action::Archive => "archive",
             Action::Delete => "delete",
+            Action::DeleteDoneTasks => "delete-done-tasks",
             Action::Search => "search",
             Action::CycleFilter => "cycle-filter",
             Action::SortPicker => "sort",
@@ -215,6 +218,7 @@ impl Action {
             Action::SetNotes => vec![c(KeyCode::Char('n'))],
             Action::Archive => vec![c(KeyCode::Char('d'))],
             Action::Delete => vec![c(KeyCode::Char('X'))],
+            Action::DeleteDoneTasks => vec![c(KeyCode::Char('L'))],
             Action::Search => vec![c(KeyCode::Char('/'))],
             Action::CycleFilter => vec![c(KeyCode::Char('f'))],
             Action::SortPicker => vec![c(KeyCode::Char('o'))],
