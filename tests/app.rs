@@ -2244,3 +2244,40 @@ fn deleting_a_notebook_removes_its_folder() {
     assert!(!dir.path().join("notes").join("Temp").exists());
     assert_eq!(app.notes_focus, NotesFocus::Notebooks);
 }
+
+#[test]
+fn deleting_all_done_tasks_deletes_done_tasks() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app_in(dir.path());
+    app.add_list("my_list".to_string());
+    app.select_list_index(0);
+    app.add_task("foo".to_string());
+    app.add_task("done".to_string());
+    app.toggle_current_done();
+
+    app.delete_done_tasks();
+    assert!(app.lists[0].tasks.len() == 1);
+}
+
+#[test]
+fn deleting_all_done_tasks_is_scoped_to_list() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app_in(dir.path());
+    app.add_list("my_list".to_string());
+    app.select_list_index(0);
+    app.add_task("foo".to_string());
+    app.add_task("done".to_string());
+    app.toggle_current_done();
+
+    app.add_list("to_delete_from".to_string());
+    app.select_list_index(1);
+    app.add_task("foo2".to_string());
+    app.add_task("done2".to_string());
+    app.toggle_current_done();
+
+    app.delete_done_tasks();
+    assert!(app.lists[0].tasks.len() == 2);
+    assert!(app.lists[0].tasks.iter().filter(|t| t.done).count() == 1);
+    assert!(app.lists[1].tasks.len() == 1);
+}
+

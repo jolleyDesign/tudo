@@ -149,6 +149,7 @@ note operations (see [Notes](#notes)).
 |-----|--------|
 | `d` | archive the selected task |
 | `X` | permanently delete the selected task/list/subtask (asks to confirm) |
+| `L` | permanently delete all done tasks from the selected list (asks to confirm) |
 
 **Find & app**
 
@@ -305,6 +306,7 @@ tudo writes a full `keybindings` block into your `config.json` (on first run, an
 | `set-notes` | `n` | edit notes |
 | `archive` | `d` | archive the selected task |
 | `delete` | `X` | permanently delete (asks to confirm) |
+| `delete-done-tasks` | `L` | delete done tasks in list (asks to confirm) |
 | `search` | `/` | search titles, tags, and notes |
 | `cycle-filter` | `f` | cycle the status filter (all / active / done) |
 | `sort` | `o` | open the sort picker (manual / priority / points / due date / created / A–Z; `r` flips direction) |
