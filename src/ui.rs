@@ -13,7 +13,9 @@ use ratatui::widgets::{
     ScrollbarOrientation, ScrollbarState, Wrap,
 };
 
-use crate::app::{App, Focus, InputField, Mode, NoteView, NotesFocus, Tab, View};
+use crate::app::{
+    App, Focus, InputField, InputState, Mode, NoteView, NotesFocus, Tab, View, row_col_of,
+};
 use crate::keybind::Action;
 use crate::model::{Note, NoteSort, QuickAddSpan, Sort, Task, quick_add_spans};
 use crate::theme;
@@ -31,6 +33,9 @@ pub fn render(f: &mut Frame, app: &mut App) {
     }
 
     render_base(f, app);
+    // Only an open input overlay has a text area to click into; it records its
+    // own below.
+    app.clickables.input_text = None;
 
     // The rendered read view needs &mut App (to clamp scroll and record link
     // rects), so it's handled before the immutable-borrow match below.
@@ -43,9 +48,13 @@ pub fn render(f: &mut Frame, app: &mut App) {
         render_move_picker(f, app);
         return;
     }
+    // Input overlays record the text area they drew into, for mouse selection.
+    if matches!(app.mode, Mode::Input(_)) {
+        render_input(f, app);
+        return;
+    }
 
     match &app.mode {
-        Mode::Input(_) => render_input(f, app),
         Mode::Confirm(_) => render_confirm(f, app),
         Mode::ThemePicker(_) => render_theme_picker(f, app),
         Mode::CopyMenu(_) => render_copy_menu(f, app),
@@ -1687,15 +1696,24 @@ fn render_footer(f: &mut Frame, area: Rect, app: &App) {
 
 // --- overlays ---------------------------------------------------------------
 
-fn render_input(f: &mut Frame, app: &App) {
-    let Mode::Input(input) = &app.mode else {
-        return;
+fn render_input(f: &mut Frame, app: &mut App) {
+    let text_area = {
+        let Mode::Input(input) = &app.mode else {
+            return;
+        };
+        // The note body gets the whole screen to write in, not a small popup.
+        if input.field == InputField::NoteBody {
+            render_note_body_editor(f, app, input)
+        } else {
+            render_input_popup(f, input)
+        }
     };
-    // The note body gets the whole screen to write in, not a small popup.
-    if input.field == InputField::NoteBody {
-        render_note_body_editor(f, app, input);
-        return;
-    }
+    app.clickables.input_text = Some(text_area);
+}
+
+/// The modal text-entry popup used by every field but the note body. Returns
+/// the text area it drew into and the scroll offset used, for mouse selection.
+fn render_input_popup(f: &mut Frame, input: &InputState) -> (Rect, u16) {
     let height = if input.multiline { 10 } else { 3 };
     let area = centered_rect(f.area(), 70, height);
     overlay_clear(f, area);
@@ -1703,55 +1721,36 @@ fn render_input(f: &mut Frame, app: &App) {
     let inner = block.inner(area);
     f.render_widget(block, area);
 
+    if input.multiline {
+        let scroll = render_text_area(f, inner, input);
+        return (inner, scroll);
+    }
+
     // The quick-add task input and the new-note input highlight their markers
     // live; every other field is plain text. Highlighting only recolors
     // characters, so the cursor math below (counting characters) stays correct.
-    if input.field == InputField::NewTask {
-        f.render_widget(
-            Paragraph::new(highlight_quick_add(&input.buffer)).wrap(Wrap { trim: false }),
-            inner,
-        );
-    } else if input.field == InputField::NewNote {
-        f.render_widget(
-            Paragraph::new(highlight_note_title(&input.buffer)).wrap(Wrap { trim: false }),
-            inner,
-        );
-    } else {
-        f.render_widget(
-            Paragraph::new(input.buffer.as_str())
-                .style(Style::default().fg(theme::fg()))
-                .wrap(Wrap { trim: false }),
-            inner,
-        );
-    }
-
-    // Place the real terminal cursor.
-    if input.multiline {
-        let mut x = inner.x;
-        let mut y = inner.y;
-        for ch in input.buffer.chars().take(input.cursor) {
-            if ch == '\n' {
-                y += 1;
-                x = inner.x;
-            } else {
-                x += 1;
-                if x >= inner.x + inner.width {
-                    x = inner.x;
-                    y += 1;
-                }
-            }
-        }
-        f.set_cursor_position((x.min(inner.x + inner.width.saturating_sub(1)), y));
-    } else {
-        let x = inner.x + input.cursor as u16;
-        f.set_cursor_position((x.min(inner.x + inner.width.saturating_sub(1)), inner.y));
-    }
+    let line = match input.field {
+        InputField::NewTask => highlight_quick_add(&input.buffer),
+        InputField::NewNote => highlight_note_title(&input.buffer),
+        _ => Line::from(Span::styled(
+            input.buffer.clone(),
+            Style::default().fg(theme::fg()),
+        )),
+    };
+    f.render_widget(
+        Paragraph::new(apply_selection(line, input.selection())).wrap(Wrap { trim: false }),
+        inner,
+    );
+    let x = inner.x + input.cursor as u16;
+    f.set_cursor_position((x.min(inner.x + inner.width.saturating_sub(1)), inner.y));
+    (inner, 0)
 }
 
 /// Full-screen editor for a note body: fills the whole body region (between the
 /// header and footer), titled with the note, with a save/cancel hint at the
-/// bottom. Drawn as an overlay over the note panes.
-fn render_note_body_editor(f: &mut Frame, app: &App, input: &crate::app::InputState) {
+/// bottom. Drawn as an overlay over the note panes. Returns the text area and
+/// its scroll offset.
+fn render_note_body_editor(f: &mut Frame, app: &App, input: &InputState) -> (Rect, u16) {
     let screen = f.area();
     let body = Rect {
         x: screen.x,
@@ -1772,49 +1771,126 @@ fn render_note_body_editor(f: &mut Frame, app: &App, input: &crate::app::InputSt
     // Reserve the last inner row for the key hint; text fills the rest.
     let [text_area, hint_area] =
         Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(block_inner);
-    let width = text_area.width.max(1);
-    let height = text_area.height.max(1);
-
-    // Cursor's (row, col) using a hard char-wrap at the pane width — the same
-    // model drives both the on-screen cursor and the vertical scroll, so they
-    // stay in lockstep.
-    let (mut crow, mut ccol) = (0u16, 0u16);
-    for ch in input.buffer.chars().take(input.cursor) {
-        if ch == '\n' {
-            crow += 1;
-            ccol = 0;
-        } else {
-            ccol += 1;
-            if ccol >= width {
-                ccol = 0;
-                crow += 1;
-            }
-        }
-    }
-    // Scroll so the cursor row stays on screen.
-    let scroll_y = crow.saturating_sub(height - 1);
-
-    // `split('\n')` (not `lines()`) so a trailing newline shows as a blank last
-    // line and the cursor can sit on it.
-    let body_lines: Vec<Line> = input.buffer.split('\n').map(markdown_line).collect();
-    f.render_widget(
-        Paragraph::new(Text::from(body_lines))
-            .wrap(Wrap { trim: false })
-            .scroll((scroll_y, 0)),
-        text_area,
-    );
+    let scroll = render_text_area(f, text_area, input);
     f.render_widget(
         Paragraph::new(Line::from(Span::styled(
-            "Enter = newline  ·  Tab = read view  ·  Esc or Ctrl+S = save & close",
+            "Shift+arrows / drag = select  ·  Ctrl+C = copy  ·  Tab = read view  ·  Esc / Ctrl+S = save",
             Style::default().fg(theme::muted()),
         ))),
         hint_area,
     );
+    (text_area, scroll)
+}
 
+/// Draw a multiline buffer into `area`: markdown-styled, word-wrapped with
+/// [`wrap_text`], the highlighted range picked out, and scrolled to keep the
+/// cursor on screen. Places the terminal cursor and returns the scroll offset
+/// used, so mouse hit-testing can undo it.
+fn render_text_area(f: &mut Frame, area: Rect, input: &InputState) -> u16 {
+    let width = area.width.max(1);
+    let height = area.height.max(1);
+    let chars: Vec<char> = input.buffer.chars().collect();
+    let styles = markdown_styles(&input.buffer);
+    let rows = input.rows(width as usize);
+    let (crow, ccol) = row_col_of(&rows, input.cursor);
+    let crow = u16::try_from(crow).unwrap_or(u16::MAX);
+    // The view follows the cursor: scroll only as far as keeping it on screen.
+    let scroll = crow.saturating_sub(height - 1);
+    let sel = input.selection();
+    let highlight = Style::default().bg(theme::sel());
+    let style_at = |i: usize| {
+        let base = styles.get(i).copied().unwrap_or_default();
+        match sel {
+            Some((lo, hi)) if i >= lo && i < hi => base.patch(highlight),
+            _ => base,
+        }
+    };
+
+    let mut lines: Vec<Line> = Vec::new();
+    for row in rows.iter().skip(scroll as usize).take(height as usize) {
+        let mut spans: Vec<Span> = Vec::new();
+        let mut i = row.start;
+        while i < row.end {
+            let style = style_at(i);
+            let start = i;
+            while i < row.end && style_at(i) == style {
+                i += 1;
+            }
+            spans.push(Span::styled(
+                chars[start..i].iter().collect::<String>(),
+                style,
+            ));
+        }
+        // A selection running past the end of a line highlights one cell there,
+        // so a multi-line range reads as continuous rather than ragged.
+        if let Some((lo, hi)) = sel
+            && row.hard
+            && row.end >= lo
+            && row.end < hi
+        {
+            spans.push(Span::styled(" ", highlight));
+        }
+        lines.push(Line::from(spans));
+    }
+
+    // The rows are already wrapped, so the paragraph must not wrap them again.
+    f.render_widget(Paragraph::new(Text::from(lines)), area);
     f.set_cursor_position((
-        (text_area.x + ccol).min(text_area.x + width - 1),
-        text_area.y + (crow - scroll_y),
+        (area.x + ccol as u16).min(area.x + width - 1),
+        area.y + (crow - scroll),
     ));
+    scroll
+}
+
+/// Per-character styles for a whole buffer, from the same markdown styling the
+/// editor has always used. Computed one logical line at a time so a wrapped
+/// continuation row can be sliced straight out of it without being mistaken for
+/// a new list item or heading.
+fn markdown_styles(buffer: &str) -> Vec<Style> {
+    let mut out = Vec::with_capacity(buffer.chars().count());
+    for (i, line) in buffer.split('\n').enumerate() {
+        if i > 0 {
+            out.push(Style::default()); // the newline itself
+        }
+        for span in markdown_line(line).spans {
+            out.extend(span.content.chars().map(|_| span.style));
+        }
+    }
+    out
+}
+
+/// Overlay the selection highlight on an already-styled line, splitting spans
+/// at the range's edges so it lands on exactly the highlighted characters.
+fn apply_selection(line: Line<'static>, sel: Option<(usize, usize)>) -> Line<'static> {
+    let Some((lo, hi)) = sel else {
+        return line;
+    };
+    let highlight = Style::default().bg(theme::sel());
+    let mut spans: Vec<Span> = Vec::new();
+    let mut idx = 0;
+    for span in line.spans {
+        let chars: Vec<char> = span.content.chars().collect();
+        let mut i = 0;
+        while i < chars.len() {
+            let selected = |j: usize| idx + j >= lo && idx + j < hi;
+            let on = selected(i);
+            let start = i;
+            while i < chars.len() && selected(i) == on {
+                i += 1;
+            }
+            let style = if on {
+                span.style.patch(highlight)
+            } else {
+                span.style
+            };
+            spans.push(Span::styled(
+                chars[start..i].iter().collect::<String>(),
+                style,
+            ));
+        }
+        idx += chars.len();
+    }
+    Line::from(spans)
 }
 
 /// Colour `#tag` tokens in the new-note input purple (the same colour tags use
@@ -2239,10 +2315,7 @@ fn render_move_picker(f: &mut Frame, app: &mut App) {
         lines.push(Line::from(vec![
             Span::styled("Search: ", Style::default().fg(theme::muted())),
             Span::styled("\u{2588}", Style::default().fg(theme::accent())),
-            Span::styled(
-                " type to filter",
-                Style::default().fg(theme::sel_dim()),
-            ),
+            Span::styled(" type to filter", Style::default().fg(theme::sel_dim())),
         ]));
     } else {
         lines.push(Line::from(vec![

@@ -581,3 +581,114 @@ fn help_overlay_reflects_custom_keybindings() {
         "help should show the rebound search key: {text}"
     );
 }
+
+/// Open the full-screen note-body editor on a note with `body`.
+fn editing_note_body(dir: &std::path::Path, body: &str) -> App {
+    let mut app = App::new(Some(dir.to_path_buf())).unwrap();
+    app.switch_tab(Tab::Notes);
+    app.add_notebook("N".to_string());
+    app.add_note("Doc".to_string());
+    app.set_current_note_body(body.to_string());
+    app.note_focus_notes();
+    app.note_activate();
+    app
+}
+
+fn editor_cursor(app: &App) -> usize {
+    match &app.mode {
+        Mode::Input(i) => i.cursor,
+        other => panic!("not editing, got {other:?}"),
+    }
+}
+
+fn mouse_at(kind: MouseEventKind, col: u16, row: u16) -> MouseEvent {
+    MouseEvent {
+        kind,
+        column: col,
+        row,
+        modifiers: KeyModifiers::NONE,
+    }
+}
+
+#[test]
+fn clicking_in_the_note_editor_places_the_cursor() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = editing_note_body(dir.path(), "alpha beta\nsecond line");
+
+    // Render first so the editor's text area is recorded for hit-testing.
+    let buf = render_to_buffer(&mut app, 60, 20);
+    let (col, row) = find_needle(&buf, "beta");
+    event::handle_mouse(
+        &mut app,
+        mouse_at(MouseEventKind::Down(MouseButton::Left), col, row),
+    );
+    assert_eq!(editor_cursor(&app), 6, "cursor lands on the 'b' of beta");
+
+    // A click past the end of a line clamps to the line's last position.
+    event::handle_mouse(
+        &mut app,
+        mouse_at(MouseEventKind::Down(MouseButton::Left), col + 40, row),
+    );
+    assert_eq!(editor_cursor(&app), 10);
+}
+
+#[test]
+fn dragging_in_the_note_editor_selects_text() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = editing_note_body(dir.path(), "alpha beta\nsecond line");
+
+    let buf = render_to_buffer(&mut app, 60, 20);
+    let (col, row) = find_needle(&buf, "beta");
+    event::handle_mouse(
+        &mut app,
+        mouse_at(MouseEventKind::Down(MouseButton::Left), col, row),
+    );
+    // Drag across "beta" and on into the next line.
+    event::handle_mouse(
+        &mut app,
+        mouse_at(MouseEventKind::Drag(MouseButton::Left), col + 4, row),
+    );
+    let selected = match &app.mode {
+        Mode::Input(i) => i.selected_text().unwrap(),
+        _ => panic!("not editing"),
+    };
+    assert_eq!(selected, "beta");
+
+    event::handle_mouse(
+        &mut app,
+        mouse_at(MouseEventKind::Drag(MouseButton::Left), col, row + 1),
+    );
+    let selected = match &app.mode {
+        Mode::Input(i) => i.selected_text().unwrap(),
+        _ => panic!("not editing"),
+    };
+    assert_eq!(selected, "beta\nsecond");
+
+    // The highlighted cells carry the selection background.
+    let buf = render_to_buffer(&mut app, 60, 20);
+    let (bcol, brow) = find_needle(&buf, "beta");
+    assert_eq!(buf.cell((bcol, brow)).unwrap().bg, theme::sel());
+    assert_ne!(buf.cell((bcol - 2, brow)).unwrap().bg, theme::sel());
+}
+
+#[test]
+fn the_note_editor_cursor_follows_the_wrapped_text() {
+    let dir = tempfile::tempdir().unwrap();
+    // A logical line longer than the pane, so it word-wraps on screen.
+    let body = "aaa bbb ccc ddd eee fff ggg hhh iii jjj kkk lll mmm nnn ooo ppp";
+    let mut app = editing_note_body(dir.path(), body);
+
+    let buf = render_to_buffer(&mut app, 30, 12);
+    // Words are kept whole across the wrap (a hard char-wrap would split them).
+    let text = buffer_text(&buf);
+    assert!(text.contains("kkk lll"), "words stay whole: {text}");
+
+    // The screen position just past the last character is the buffer's end, so
+    // the drawn cursor and a click there agree with the wrapped layout.
+    let (col, row) = find_needle(&buf, "ppp");
+    event::handle_mouse(
+        &mut app,
+        mouse_at(MouseEventKind::Down(MouseButton::Left), col + 3, row),
+    );
+    assert_eq!(editor_cursor(&app), body.chars().count());
+}

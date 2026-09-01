@@ -3,9 +3,11 @@
 use ratatui::crossterm::event::{
     KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
+use ratatui::layout::Rect;
 
 use crate::app::{
-    App, ConfirmAction, CopyWhat, Focus, InputField, Mode, NoteCopyWhat, NotesFocus, Tab,
+    self, App, ConfirmAction, CopyWhat, Focus, InputField, InputState, Mode, NoteCopyWhat,
+    NotesFocus, Tab,
 };
 use crate::config;
 use crate::keybind::Action;
@@ -16,8 +18,14 @@ pub fn handle_key(app: &mut App, key: KeyEvent) {
     if key.kind == KeyEventKind::Release {
         return;
     }
-    // Ctrl-C always quits.
+    // Ctrl-C copies the highlighted text while editing, and otherwise quits.
     if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
+        if let Mode::Input(input) = &app.mode
+            && let Some(text) = input.selected_text()
+        {
+            app.copy_to_clipboard(&text, "selection");
+            return;
+        }
         app.should_quit = true;
         return;
     }
@@ -353,6 +361,11 @@ fn is_task_action(action: Action) -> bool {
 
 fn input_key(app: &mut App, key: KeyEvent) {
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+    // AltGr arrives as Ctrl+Alt on some platforms, so bindings that would eat a
+    // typed character require Ctrl on its own.
+    let ctrl_only = ctrl && !key.modifiers.contains(KeyModifiers::ALT);
+    // Shifted cursor keys stretch the highlight instead of dropping it.
+    let shift = key.modifiers.contains(KeyModifiers::SHIFT);
 
     // Resolve commit/cancel first (needs to read fields, then mutate app).
     enum Step {
@@ -363,6 +376,8 @@ fn input_key(app: &mut App, key: KeyEvent) {
     let mut step = Step::None;
     // Tab in the note editor saves and flips to the rendered read view.
     let mut to_view = false;
+    // Text Ctrl+X lifted out of the buffer, copied once the borrow ends.
+    let mut cut: Option<String> = None;
 
     if let Mode::Input(input) = &mut app.mode {
         match key.code {
@@ -377,27 +392,37 @@ fn input_key(app: &mut App, key: KeyEvent) {
             KeyCode::Enter if input.multiline => input.insert('\n'),
             KeyCode::Enter => step = Step::Commit,
             KeyCode::Char('s') if input.multiline && ctrl => step = Step::Commit,
+            // Ctrl+A highlights everything; Ctrl+X lifts the highlight out.
+            KeyCode::Char('a') if ctrl_only => input.select_all(),
+            KeyCode::Char('x') if ctrl_only => {
+                cut = input.selected_text();
+                input.delete_selection();
+            }
             KeyCode::Char(c) => input.insert(c),
             KeyCode::Backspace => input.backspace(),
             KeyCode::Delete => input.delete(),
-            KeyCode::Left => input.left(),
-            KeyCode::Right => input.right(),
-            KeyCode::Up if input.multiline => input.up(),
-            KeyCode::Down if input.multiline => input.down(),
-            KeyCode::PageUp if input.multiline => {
+            KeyCode::Left => move_cursor(input, shift, InputState::left),
+            KeyCode::Right => move_cursor(input, shift, InputState::right),
+            KeyCode::Up if input.multiline => move_cursor(input, shift, InputState::up),
+            KeyCode::Down if input.multiline => move_cursor(input, shift, InputState::down),
+            KeyCode::PageUp if input.multiline => move_cursor(input, shift, |i| {
                 for _ in 0..10 {
-                    input.up();
+                    i.up();
                 }
-            }
-            KeyCode::PageDown if input.multiline => {
+            }),
+            KeyCode::PageDown if input.multiline => move_cursor(input, shift, |i| {
                 for _ in 0..10 {
-                    input.down();
+                    i.down();
                 }
-            }
-            KeyCode::Home => input.home(),
-            KeyCode::End => input.end(),
+            }),
+            KeyCode::Home => move_cursor(input, shift, InputState::home),
+            KeyCode::End => move_cursor(input, shift, InputState::end),
             _ => {}
         }
+    }
+
+    if let Some(text) = cut {
+        app.copy_to_clipboard(&text, "selection");
     }
 
     match step {
@@ -419,6 +444,17 @@ fn input_key(app: &mut App, key: KeyEvent) {
             }
         }
     }
+}
+
+/// Run a cursor move, keeping the highlight anchored when `select` (a shifted
+/// cursor key or a drag) and dropping it otherwise.
+fn move_cursor(input: &mut InputState, select: bool, mv: impl FnOnce(&mut InputState)) {
+    if select {
+        input.begin_selection();
+    } else {
+        input.clear_selection();
+    }
+    mv(input);
 }
 
 /// Where an input field returns to when it closes.
@@ -547,25 +583,8 @@ fn first_run_key(app: &mut App, key: KeyEvent) {
 
 /// Handle a mouse event using the clickable rects recorded during render.
 pub fn handle_mouse(app: &mut App, m: MouseEvent) {
-    // The scroll wheel navigates the full-screen note editor by moving the
-    // cursor a few lines (the view follows it), like scrolling moves the
-    // selection elsewhere.
-    if matches!(&app.mode, Mode::Input(input) if input.field == InputField::NoteBody) {
-        if let Mode::Input(input) = &mut app.mode {
-            match m.kind {
-                MouseEventKind::ScrollDown => {
-                    for _ in 0..3 {
-                        input.down();
-                    }
-                }
-                MouseEventKind::ScrollUp => {
-                    for _ in 0..3 {
-                        input.up();
-                    }
-                }
-                _ => {}
-            }
-        }
+    if matches!(app.mode, Mode::Input(_)) {
+        input_mouse(app, m);
         return;
     }
     // The rendered read view scrolls with the wheel and follows clicked links.
@@ -622,6 +641,56 @@ pub fn handle_mouse(app: &mut App, m: MouseEvent) {
     }
 }
 
+/// Mouse handling inside an open text input: the wheel walks the cursor through
+/// a multiline buffer (the view follows it), a left click places the cursor and
+/// a left drag stretches a selection out from where the click landed.
+fn input_mouse(app: &mut App, m: MouseEvent) {
+    let text_area = app.clickables.input_text;
+    let Mode::Input(input) = &mut app.mode else {
+        return;
+    };
+    match m.kind {
+        MouseEventKind::ScrollDown if input.multiline => move_cursor(input, false, |i| {
+            for _ in 0..3 {
+                i.down();
+            }
+        }),
+        MouseEventKind::ScrollUp if input.multiline => move_cursor(input, false, |i| {
+            for _ in 0..3 {
+                i.up();
+            }
+        }),
+        MouseEventKind::Down(MouseButton::Left) | MouseEventKind::Drag(MouseButton::Left) => {
+            let Some((rect, scroll)) = text_area else {
+                return;
+            };
+            let dragging = matches!(m.kind, MouseEventKind::Drag(_));
+            // A click has to land in the text; a drag keeps selecting once the
+            // pointer wanders outside it, clamped to the nearest edge.
+            if !dragging && !hit(rect, m.column, m.row) {
+                return;
+            }
+            let idx = input_index_at(input, rect, scroll, m.column, m.row);
+            input.place_cursor(idx, dragging);
+        }
+        _ => {}
+    }
+}
+
+/// The character index under the pointer, given the text area it was drawn in
+/// and the scroll offset used. Clamped into the area, so a drag past an edge
+/// selects up to the nearest character.
+fn input_index_at(input: &InputState, rect: Rect, scroll: u16, col: u16, row: u16) -> usize {
+    let col = col.clamp(rect.x, rect.x + rect.width.saturating_sub(1));
+    let row = row.clamp(rect.y, rect.y + rect.height.saturating_sub(1));
+    let vcol = (col - rect.x) as usize;
+    if !input.multiline {
+        return vcol.min(input.buffer.chars().count());
+    }
+    let vrow = scroll as usize + (row - rect.y) as usize;
+    app::index_at(&input.rows(rect.width.max(1) as usize), vrow, vcol)
+}
+
 fn task_click(app: &mut App, col: u16, row: u16) {
     if let Some((rect, offset)) = app.clickables.lists_inner
         && hit(rect, col, row)
@@ -675,6 +744,6 @@ fn note_click(app: &mut App, col: u16, row: u16) {
     }
 }
 
-fn hit(rect: ratatui::layout::Rect, col: u16, row: u16) -> bool {
+fn hit(rect: Rect, col: u16, row: u16) -> bool {
     col >= rect.x && col < rect.x + rect.width && row >= rect.y && row < rect.y + rect.height
 }

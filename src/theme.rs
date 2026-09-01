@@ -372,6 +372,12 @@ pub fn bg() -> Color {
 pub fn surface() -> Color {
     current().surface
 }
+/// Background of a highlighted range of text (the same colour a selected row
+/// uses).
+pub fn sel() -> Color {
+    current().sel
+}
+
 pub fn sel_dim() -> Color {
     current().sel_dim
 }

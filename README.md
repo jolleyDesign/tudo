@@ -141,7 +141,7 @@ note operations (see [Notes](#notes)).
 | `P` | set or clear story points (a whole number) |
 | `D` | set or clear the due date |
 | `t` | edit tags |
-| `n` | edit notes (multi-line: `Enter` for a newline, `Ctrl+S` to save) |
+| `n` | edit notes (multi-line: `Enter` for a newline, `Ctrl+S` to save; `Shift`+arrows or a mouse drag select text, `Ctrl+C` copies it) |
 
 **Remove**
 
@@ -203,6 +203,16 @@ note below it. Press `Enter` on a note to open it in the **full-screen editor**
 (`Esc` or `Ctrl+S` saves and closes — it autosaves either way); for longer
 writing, `E` hands the file to your `$EDITOR`.
 
+**Selecting and copying text.** In the note editor (and the task-notes editor)
+you can highlight a range and copy it: hold `Shift` while moving the cursor, or
+click and drag with the mouse; `Ctrl+A` selects everything. `Ctrl+C` copies the
+highlight to the system clipboard and `Ctrl+X` cuts it — typing or `Backspace`
+replaces it. With nothing highlighted, `Ctrl+C` still quits as before. Copying
+uses the same OSC 52 escape the copy menus use, so it works over SSH. (To copy
+from a *read-only* view, use the copy menu with `c`, or your terminal's own
+selection — most terminals select with `Shift`+drag while an app is using the
+mouse.)
+
 Notes are plain markdown. In the raw editor and the preview the markup is
 **dimmed** — heading `#`s, list bullets, blockquote `>`s, code fences, and inline
 `` ` ``/`**` delimiters recede into a muted colour so your text stands out. In
@@ -226,6 +236,8 @@ equivalent):
 | `a` / `A` | add a note / add a notebook — type `#tag` tokens in the note title to tag it (like the task quick-add) |
 | `e` | edit the note's title, or rename the notebook when the Notebooks pane is focused |
 | `Enter` / `n` | open the full-screen body editor — arrow keys & `PageUp`/`Down` (and the scroll wheel) navigate and it scrolls for long notes; `Enter` inserts a newline; `Esc` or `Ctrl+S` saves & closes |
+| `Shift`+arrows (in the editor) | select text — hold `Shift` while moving the cursor; `Ctrl+A` selects the whole note |
+| `Ctrl+C` / `Ctrl+X` (in the editor) | copy / cut the selected text to the system clipboard |
 | `Tab` (in an open note) | flip between the raw editor and the rendered read view |
 | `f` (in the read view) | follow a `[[link]]` — picker of outgoing links + backlinks (or click a link) |
 | `E` | open the selected note in your `$EDITOR` (`$VISUAL`/`$EDITOR`, falling back to `vi`) |

@@ -2244,3 +2244,133 @@ fn deleting_a_notebook_removes_its_folder() {
     assert!(!dir.path().join("notes").join("Temp").exists());
     assert_eq!(app.notes_focus, NotesFocus::Notebooks);
 }
+
+// --- text selection in the editors -----------------------------------------
+
+/// Open the full-screen note-body editor on a note with `body`.
+fn editing_note_body(dir: &std::path::Path, body: &str) -> App {
+    let mut app = app_in(dir);
+    app.switch_tab(Tab::Notes);
+    app.add_notebook("N".to_string());
+    app.add_note("t".to_string());
+    app.set_current_note_body(body.to_string());
+    app.note_focus_notes();
+    app.note_activate(); // straight into the editor, cursor at the end
+    app
+}
+
+fn input(app: &App) -> &tudo::app::InputState {
+    match &app.mode {
+        Mode::Input(i) => i,
+        other => panic!("not editing, got {other:?}"),
+    }
+}
+
+fn press(app: &mut App, code: KeyCode, mods: KeyModifiers) {
+    event::handle_key(app, KeyEvent::new(code, mods));
+}
+
+#[test]
+fn wrap_text_word_wraps_and_maps_every_index() {
+    use tudo::app::{index_at, row_col_of, wrap_text};
+
+    let text = "hello world again\nshort";
+    let rows = wrap_text(text, 12);
+    // "hello world " wraps before "again"; the second logical line is its own row.
+    assert_eq!(rows.len(), 3);
+    assert_eq!((rows[0].start, rows[0].end, rows[0].hard), (0, 12, false));
+    assert_eq!((rows[1].start, rows[1].end, rows[1].hard), (12, 17, true));
+    assert_eq!((rows[2].start, rows[2].end, rows[2].hard), (18, 23, true));
+
+    // Every character index round-trips through the screen position it draws at.
+    for idx in 0..=text.chars().count() {
+        let (row, col) = row_col_of(&rows, idx);
+        assert_eq!(index_at(&rows, row, col), idx, "index {idx} round-trips");
+    }
+    // A word longer than the width is hard-split rather than dropped.
+    let long = wrap_text("abcdefgh", 3);
+    assert_eq!(long.len(), 3);
+    assert_eq!(long[0].end, 3);
+    assert_eq!(long[2].end, 8);
+}
+
+#[test]
+fn shift_arrows_select_and_ctrl_c_copies() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = editing_note_body(dir.path(), "hello world");
+
+    // Shift+Left five times highlights "world" (the cursor starts at the end).
+    for _ in 0..5 {
+        press(&mut app, KeyCode::Left, KeyModifiers::SHIFT);
+    }
+    assert_eq!(input(&app).selection(), Some((6, 11)));
+    assert_eq!(input(&app).selected_text().unwrap(), "world");
+
+    // Ctrl+C copies the highlight instead of quitting, and keeps it.
+    press(&mut app, KeyCode::Char('c'), KeyModifiers::CONTROL);
+    assert!(!app.should_quit, "Ctrl+C with a selection must not quit");
+    assert!(app.status.contains("copied selection"), "{}", app.status);
+    assert_eq!(input(&app).selected_text().unwrap(), "world");
+
+    // An unshifted move drops the highlight.
+    press(&mut app, KeyCode::Left, KeyModifiers::NONE);
+    assert_eq!(input(&app).selection(), None);
+}
+
+#[test]
+fn ctrl_c_still_quits_without_a_selection() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = editing_note_body(dir.path(), "hello");
+    press(&mut app, KeyCode::Char('c'), KeyModifiers::CONTROL);
+    assert!(app.should_quit);
+}
+
+#[test]
+fn typing_and_backspace_replace_the_selection() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = editing_note_body(dir.path(), "hello world");
+
+    for _ in 0..5 {
+        press(&mut app, KeyCode::Left, KeyModifiers::SHIFT);
+    }
+    type_str(&mut app, "there");
+    assert_eq!(input(&app).buffer, "hello there");
+    assert_eq!(input(&app).selection(), None);
+
+    // Backspace over a highlight removes the whole range, not one character.
+    for _ in 0..5 {
+        press(&mut app, KeyCode::Left, KeyModifiers::SHIFT);
+    }
+    event::handle_key(&mut app, KeyEvent::from(KeyCode::Backspace));
+    assert_eq!(input(&app).buffer, "hello ");
+}
+
+#[test]
+fn ctrl_a_selects_all_and_ctrl_x_cuts() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = editing_note_body(dir.path(), "line one\nline two");
+
+    press(&mut app, KeyCode::Char('a'), KeyModifiers::CONTROL);
+    assert_eq!(input(&app).selected_text().unwrap(), "line one\nline two");
+
+    press(&mut app, KeyCode::Char('x'), KeyModifiers::CONTROL);
+    assert_eq!(input(&app).buffer, "");
+    assert_eq!(input(&app).cursor, 0);
+    assert!(app.status.contains("copied selection"), "{}", app.status);
+}
+
+#[test]
+fn shift_up_selects_across_lines_in_task_notes() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app_in(dir.path());
+    app.add_list("L".to_string());
+    app.add_task("t".to_string());
+    app.set_current_notes("first line\nsecond line".to_string());
+    app.start_set_notes();
+
+    assert_eq!(input(&app).field, InputField::Notes);
+    // The cursor starts at the end; Shift+Up reaches back a line, keeping the
+    // column, so the highlight spans the line break.
+    press(&mut app, KeyCode::Up, KeyModifiers::SHIFT);
+    assert_eq!(input(&app).selected_text().unwrap(), "\nsecond line");
+}

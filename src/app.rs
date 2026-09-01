@@ -172,6 +172,9 @@ pub struct InputState {
     pub buffer: String,
     /// Cursor position as a character index into `buffer`.
     pub cursor: usize,
+    /// Fixed end of the highlighted range, as a character index; the moving end
+    /// is `cursor`. `None` when nothing is highlighted.
+    pub anchor: Option<usize>,
     pub multiline: bool,
     /// Return to Detail mode (vs Normal) when finished.
     pub return_detail: bool,
@@ -191,6 +194,7 @@ impl InputState {
             prompt: prompt.to_string(),
             buffer,
             cursor,
+            anchor: None,
             multiline,
             return_detail,
         }
@@ -205,12 +209,17 @@ impl InputState {
     }
 
     pub fn insert(&mut self, c: char) {
+        // Typing over a highlighted range replaces it, as in any editor.
+        self.delete_selection();
         let b = self.byte_at(self.cursor);
         self.buffer.insert(b, c);
         self.cursor += 1;
     }
 
     pub fn backspace(&mut self) {
+        if self.delete_selection() {
+            return;
+        }
         if self.cursor > 0 {
             let start = self.byte_at(self.cursor - 1);
             let end = self.byte_at(self.cursor);
@@ -238,8 +247,12 @@ impl InputState {
         self.cursor = self.buffer.chars().count();
     }
 
-    /// Forward-delete the character under the cursor (the `Delete` key).
+    /// Forward-delete the character under the cursor (the `Delete` key), or the
+    /// highlighted range when there is one.
     pub fn delete(&mut self) {
+        if self.delete_selection() {
+            return;
+        }
         let n = self.buffer.chars().count();
         if self.cursor < n {
             let start = self.byte_at(self.cursor);
@@ -278,6 +291,156 @@ impl InputState {
         let next_end = (next_start..n).find(|&i| chars[i] == '\n').unwrap_or(n);
         self.cursor = next_start + col.min(next_end - next_start);
     }
+
+    // --- selection -----------------------------------------------------------
+
+    /// The highlighted range as an ordered half-open range of character
+    /// indices, or `None` when nothing is highlighted.
+    pub fn selection(&self) -> Option<(usize, usize)> {
+        let anchor = self.anchor?;
+        let (lo, hi) = if anchor <= self.cursor {
+            (anchor, self.cursor)
+        } else {
+            (self.cursor, anchor)
+        };
+        (lo < hi).then_some((lo, hi))
+    }
+
+    /// The highlighted text, ready for the clipboard.
+    pub fn selected_text(&self) -> Option<String> {
+        let (lo, hi) = self.selection()?;
+        Some(self.buffer[self.byte_at(lo)..self.byte_at(hi)].to_string())
+    }
+
+    /// Anchor a selection at the cursor if one isn't already running. Called
+    /// before a shifted cursor move so the move stretches the range.
+    pub fn begin_selection(&mut self) {
+        self.anchor.get_or_insert(self.cursor);
+    }
+
+    pub fn clear_selection(&mut self) {
+        self.anchor = None;
+    }
+
+    /// Highlight the whole buffer.
+    pub fn select_all(&mut self) {
+        self.anchor = Some(0);
+        self.cursor = self.buffer.chars().count();
+    }
+
+    /// Remove the highlighted range, leaving the cursor where it began.
+    /// Returns whether anything was removed.
+    pub fn delete_selection(&mut self) -> bool {
+        let Some((lo, hi)) = self.selection() else {
+            self.anchor = None;
+            return false;
+        };
+        let (start, end) = (self.byte_at(lo), self.byte_at(hi));
+        self.buffer.replace_range(start..end, "");
+        self.cursor = lo;
+        self.anchor = None;
+        true
+    }
+
+    /// Put the cursor at `idx` (clamped to the buffer), stretching the
+    /// selection to follow when `select` — the mouse's counterpart to a
+    /// shifted cursor key.
+    pub fn place_cursor(&mut self, idx: usize, select: bool) {
+        if select {
+            self.begin_selection();
+        } else {
+            self.anchor = None;
+        }
+        self.cursor = idx.min(self.buffer.chars().count());
+    }
+
+    /// Visual rows of this buffer wrapped to `width` columns.
+    pub fn rows(&self, width: usize) -> Vec<TextRow> {
+        wrap_text(&self.buffer, width)
+    }
+}
+
+/// One visual row of a wrapped buffer: the half-open range of character indices
+/// it shows, plus whether it ends a logical line (a `\n` or the end of the
+/// buffer) rather than a soft wrap.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TextRow {
+    pub start: usize,
+    pub end: usize,
+    pub hard: bool,
+}
+
+impl TextRow {
+    pub fn len(&self) -> usize {
+        self.end - self.start
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.start == self.end
+    }
+}
+
+/// Word-wrap `text` to `width` columns. The rows cover every character exactly
+/// once and in order, so a character index maps to one screen position and
+/// back — one shared model keeps the drawn text, the cursor, the selection
+/// highlight and mouse hit-testing in step. A word longer than a row is
+/// hard-split, and the space a wrap breaks on stays on the row above it.
+pub fn wrap_text(text: &str, width: usize) -> Vec<TextRow> {
+    let width = width.max(1);
+    let chars: Vec<char> = text.chars().collect();
+    let mut rows = Vec::new();
+    let mut line_start = 0;
+    loop {
+        let line_end = (line_start..chars.len())
+            .find(|&i| chars[i] == '\n')
+            .unwrap_or(chars.len());
+        let mut start = line_start;
+        while line_end - start > width {
+            let brk = (start..start + width)
+                .rev()
+                .find(|&i| chars[i] == ' ')
+                .map(|i| i + 1)
+                .unwrap_or(start + width);
+            rows.push(TextRow {
+                start,
+                end: brk,
+                hard: false,
+            });
+            start = brk;
+        }
+        rows.push(TextRow {
+            start,
+            end: line_end,
+            hard: true,
+        });
+        if line_end >= chars.len() {
+            return rows;
+        }
+        line_start = line_end + 1;
+    }
+}
+
+/// Visual (row, column) of character index `idx` within `rows`. A `idx` sitting
+/// on a soft wrap belongs to the row below it, where the cursor should show.
+pub fn row_col_of(rows: &[TextRow], idx: usize) -> (usize, usize) {
+    for (r, row) in rows.iter().enumerate() {
+        if idx < row.end || (idx == row.end && row.hard) {
+            return (r, idx.saturating_sub(row.start));
+        }
+    }
+    match rows.last() {
+        Some(row) => (rows.len() - 1, row.len()),
+        None => (0, 0),
+    }
+}
+
+/// Character index at visual (`row`, `col`) within `rows`, clamped to the end of
+/// the row (and of the buffer) so a click past the text still lands somewhere.
+pub fn index_at(rows: &[TextRow], row: usize, col: usize) -> usize {
+    let Some(row) = rows.get(row).or_else(|| rows.last()) else {
+        return 0;
+    };
+    (row.start + col).min(row.end)
 }
 
 /// Character index of the start of the logical line containing `cursor`.
@@ -583,6 +746,9 @@ pub struct Clickables {
     pub tab_rects: Vec<(Tab, Rect)>,
     /// Clickable `[[link]]` rects in the rendered read view and their targets.
     pub note_view_links: Vec<(Rect, NoteRef)>,
+    /// Text area of the open input overlay and the scroll offset used to draw
+    /// it, for click-to-place-cursor and drag-to-select.
+    pub input_text: Option<(Rect, u16)>,
 }
 
 pub struct App {
@@ -910,6 +1076,16 @@ impl App {
     pub fn set_status(&mut self, msg: impl Into<String>) {
         self.status = msg.into();
         self.status_expiry = Some(Instant::now() + STATUS_TTL);
+    }
+
+    /// Put `text` on the clipboard and say so on the status line. Used where
+    /// the payload is an arbitrary string (the editors' Ctrl+C / Ctrl+X) rather
+    /// than a whole task or note.
+    pub fn copy_to_clipboard(&mut self, text: &str, noun: &str) {
+        match crate::clipboard::copy(text) {
+            Ok(()) => self.set_status(format!("copied {noun} to clipboard")),
+            Err(e) => self.set_status(format!("copy failed: {e}")),
+        }
     }
 
     /// The instant the current message should disappear, if one is showing.
@@ -1863,8 +2039,7 @@ impl App {
         // qualifies, so this collapses to the plain first/last visible task.
         let from_done = self.lists[li].tasks[from].done;
         let sink = self.completed_to_bottom;
-        let same_group =
-            |r: &TaskRef| !sink || self.lists[r.list].tasks[r.task].done == from_done;
+        let same_group = |r: &TaskRef| !sink || self.lists[r.list].tasks[r.task].done == from_done;
         let dest_ref = if to_top {
             vis.iter().find(|r| r.task != from && same_group(r))
         } else {
@@ -1882,7 +2057,11 @@ impl App {
         // `dest_ref` was a raw index before the splice; shift it down if it sat
         // after `from`, then land just past it for a sink or just before it for a
         // hoist.
-        let ref_adj = if dest_ref > from { dest_ref - 1 } else { dest_ref };
+        let ref_adj = if dest_ref > from {
+            dest_ref - 1
+        } else {
+            dest_ref
+        };
         let insert_at = if to_top { ref_adj } else { ref_adj + 1 };
         list.tasks.insert(insert_at, task);
         self.save_list_at(li);
@@ -3646,7 +3825,11 @@ impl App {
         // `dest_ref` was a raw index before the splice; shift it down if it sat
         // after `from`, then land just past it for a sink or just before it for a
         // hoist.
-        let ref_adj = if dest_ref > from { dest_ref - 1 } else { dest_ref };
+        let ref_adj = if dest_ref > from {
+            dest_ref - 1
+        } else {
+            dest_ref
+        };
         let insert_at = if to_top { ref_adj } else { ref_adj + 1 };
         self.notebooks[ni].notes.insert(insert_at, note);
         self.renumber_notes(ni);
