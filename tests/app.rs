@@ -2335,3 +2335,77 @@ fn deleting_done_tasks_skips_the_prompt_when_there_are_none() {
     assert!(matches!(app.mode, Mode::Normal));
     assert_eq!(app.lists[0].tasks.len(), 1);
 }
+
+#[test]
+fn cycling_priority_under_a_priority_sort_keeps_the_task_selected() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app_in(dir.path());
+    app.add_list("L".to_string());
+    app.add_task("a".to_string());
+    app.add_task("b".to_string());
+    app.add_task("c".to_string());
+    set_priority(&mut app, 0, Priority::Medium);
+    app.set_sort(Sort::Priority);
+
+    let b = visible_titles(&app).iter().position(|t| t == "b").unwrap();
+    app.select_task_visible(b);
+    // Cycle "b" through every priority with the real key; it re-sorts each
+    // time, but the cursor must stay on it.
+    for _ in 0..4 {
+        event::handle_key(&mut app, KeyEvent::from(KeyCode::Char('p')));
+        assert_eq!(app.current_task().unwrap().title, "b");
+    }
+}
+
+#[test]
+fn editing_in_the_tag_view_keeps_the_task_selected() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app_in(dir.path());
+    app.add_list("Alpha".to_string());
+    app.add_list("Beta".to_string());
+    app.select_list_index(0);
+    app.add_task("a #x".to_string());
+    app.select_list_index(1);
+    app.add_task("b #x".to_string());
+    app.set_sort(Sort::Priority);
+
+    app.select_sidebar_row(tag_row(&app, "x"));
+    app.select_task_visible(1);
+    assert_eq!(app.current_task().unwrap().title, "b");
+    app.cycle_current_priority();
+    assert_eq!(visible_titles(&app), ["b", "a"]);
+    assert_eq!(app.current_task().unwrap().title, "b");
+}
+
+#[test]
+fn toggling_done_in_detail_keeps_showing_the_same_task() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app_in(dir.path());
+    app.add_list("L".to_string());
+    app.add_task("a".to_string());
+    app.add_task("b".to_string());
+    app.set_completed_to_bottom(true);
+
+    app.select_task_visible(0);
+    app.open_detail();
+    app.toggle_selected();
+    assert_eq!(visible_titles(&app), ["b", "a"]);
+    assert_eq!(app.current_task().unwrap().title, "a");
+}
+
+#[test]
+fn toggling_done_in_the_list_keeps_the_cursor_row() {
+    // Ticking off a run of tasks: when a done task sinks to the bottom the
+    // cursor stays on the row, landing on the next task.
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app_in(dir.path());
+    app.add_list("L".to_string());
+    app.add_task("a".to_string());
+    app.add_task("b".to_string());
+    app.add_task("c".to_string());
+    app.set_completed_to_bottom(true);
+
+    app.select_task_visible(0);
+    app.toggle_current_done();
+    assert_eq!(app.current_task().unwrap().title, "b");
+}

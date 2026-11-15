@@ -1429,24 +1429,33 @@ impl App {
         }
     }
 
-    /// Run `f` against the currently selected task and persist; returns false
-    /// if there is no current task. Works across the tag view because the task
-    /// is located by its full `(list, task)` reference.
+    /// Run `f` against the currently selected task and persist, keeping the
+    /// cursor on that task if the edit re-sorted the view; returns false if
+    /// there is no current task. Works across the tag view because the task is
+    /// located by its full `(list, task)` reference.
     fn with_current_task<F: FnOnce(&mut Task)>(&mut self, f: F) -> bool {
-        let Some(r) = self.current_task_ref() else {
-            return false;
-        };
-        if let Some(task) = self
+        match self.mutate_current_task(f) {
+            // Field edits never move a task within its list, so `r` is still
+            // valid after the edit.
+            Some(r) => {
+                self.keep_task_selected(Some(r));
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Like [`with_current_task`](Self::with_current_task) but leaves the cursor
+    /// where it is, returning the edited task's reference.
+    fn mutate_current_task<F: FnOnce(&mut Task)>(&mut self, f: F) -> Option<TaskRef> {
+        let r = self.current_task_ref()?;
+        let task = self
             .lists
             .get_mut(r.list)
-            .and_then(|l| l.tasks.get_mut(r.task))
-        {
-            f(task);
-            self.save_list_at(r.list);
-            true
-        } else {
-            false
-        }
+            .and_then(|l| l.tasks.get_mut(r.task))?;
+        f(task);
+        self.save_list_at(r.list);
+        Some(r)
     }
 
     // --- task / list actions -------------------------------------------------
@@ -1539,7 +1548,14 @@ impl App {
     }
 
     pub fn toggle_current_done(&mut self) {
-        self.with_current_task(|t| t.toggle_done());
+        // In the list the cursor stays on the same row rather than following the
+        // task, so ticking off a run of tasks works when done tasks sink to the
+        // bottom. The detail view follows, so it keeps showing the same task.
+        if self.in_detail() {
+            self.with_current_task(|t| t.toggle_done());
+        } else if self.mutate_current_task(|t| t.toggle_done()).is_some() {
+            self.clamp_task_selection();
+        }
     }
 
     pub fn cycle_current_priority(&mut self) {
@@ -1563,9 +1579,9 @@ impl App {
         // remove the current task from the visible set), so re-anchor both the
         // sidebar selection and the task cursor afterwards.
         let key = self.selected_entry_key();
-        self.with_current_task(|t| t.tags = tags);
+        let edited = self.mutate_current_task(|t| t.tags = tags);
         self.reselect_entry(key);
-        self.clamp_task_selection();
+        self.keep_task_selected(edited);
     }
 
     /// Set (or, on empty input, clear) the selected task's story points. A
