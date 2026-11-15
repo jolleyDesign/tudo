@@ -2040,6 +2040,11 @@ fn render_help(f: &mut Frame, app: &App) {
                 header("Remove"),
                 row(&keys_for(app, &[Action::Archive]), "archive task", RW),
                 row(&keys_for(app, &[Action::Delete]), "delete (confirm)", RW),
+                row(
+                    &keys_for(app, &[Action::DeleteDoneTasks]),
+                    "delete done (confirm)",
+                    RW,
+                ),
                 Line::raw(""),
                 header("App"),
                 row(&keys_for(app, &[Action::ThemePicker]), "theme", RW),

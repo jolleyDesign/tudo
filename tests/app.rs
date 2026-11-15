@@ -2244,3 +2244,94 @@ fn deleting_a_notebook_removes_its_folder() {
     assert!(!dir.path().join("notes").join("Temp").exists());
     assert_eq!(app.notes_focus, NotesFocus::Notebooks);
 }
+
+#[test]
+fn deleting_done_tasks_via_key_clears_only_the_selected_list() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app_in(dir.path());
+    app.add_list("Alpha".to_string());
+    app.add_list("Beta".to_string());
+    app.select_list_index(0);
+    app.add_task("keep".to_string());
+    app.add_task("done a".to_string());
+    app.toggle_current_done();
+    app.select_list_index(1);
+    app.add_task("keep b".to_string());
+    app.add_task("done b".to_string());
+    app.toggle_current_done();
+
+    event::handle_key(&mut app, KeyEvent::from(KeyCode::Char('L')));
+    assert!(matches!(app.mode, Mode::Confirm(_)));
+    event::handle_key(&mut app, KeyEvent::from(KeyCode::Char('y')));
+    assert!(matches!(app.mode, Mode::Normal));
+
+    assert_eq!(visible_titles(&app), ["keep b"]);
+    assert_eq!(app.current_task().unwrap().title, "keep b");
+    // Alpha is untouched, and the deletion survives a reload.
+    let reloaded = app_in(dir.path());
+    let alpha = reloaded.lists.iter().find(|l| l.name == "Alpha").unwrap();
+    let beta = reloaded.lists.iter().find(|l| l.name == "Beta").unwrap();
+    assert_eq!(alpha.tasks.len(), 2);
+    assert_eq!(beta.tasks.len(), 1);
+}
+
+#[test]
+fn deleting_done_tasks_keeps_the_selected_task() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app_in(dir.path());
+    app.add_list("L".to_string());
+    for t in ["d1", "a", "d2", "b"] {
+        app.add_task(t.to_string());
+    }
+    app.select_task_visible(0);
+    app.toggle_current_done();
+    app.select_task_visible(2);
+    app.toggle_current_done();
+
+    app.select_task_visible(3);
+    assert_eq!(app.current_task().unwrap().title, "b");
+    app.delete_done_tasks();
+    assert_eq!(visible_titles(&app), ["a", "b"]);
+    assert_eq!(app.current_task().unwrap().title, "b");
+}
+
+#[test]
+fn deleting_done_tasks_can_be_cancelled() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app_in(dir.path());
+    app.add_list("L".to_string());
+    app.add_task("done".to_string());
+    app.toggle_current_done();
+
+    event::handle_key(&mut app, KeyEvent::from(KeyCode::Char('L')));
+    event::handle_key(&mut app, KeyEvent::from(KeyCode::Char('n')));
+    assert!(matches!(app.mode, Mode::Normal));
+    assert_eq!(app.lists[0].tasks.len(), 1);
+}
+
+#[test]
+fn deleting_done_tasks_is_refused_in_the_tag_view() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app_in(dir.path());
+    app.add_list("Alpha".to_string());
+    app.add_task("a #x".to_string());
+    app.toggle_current_done();
+
+    app.select_sidebar_row(tag_row(&app, "x"));
+    event::handle_key(&mut app, KeyEvent::from(KeyCode::Char('L')));
+    assert!(matches!(app.mode, Mode::Normal));
+    app.delete_done_tasks();
+    assert_eq!(app.lists[0].tasks.len(), 1);
+}
+
+#[test]
+fn deleting_done_tasks_skips_the_prompt_when_there_are_none() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app_in(dir.path());
+    app.add_list("L".to_string());
+    app.add_task("open".to_string());
+
+    event::handle_key(&mut app, KeyEvent::from(KeyCode::Char('L')));
+    assert!(matches!(app.mode, Mode::Normal));
+    assert_eq!(app.lists[0].tasks.len(), 1);
+}

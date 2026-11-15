@@ -300,6 +300,15 @@ fn help_overlay_lists_keybindings() {
         "help section header missing: {text}"
     );
     assert!(text.contains("priority"), "help body missing");
+    // The right column fills the overlay exactly; its last rows must not clip.
+    assert!(
+        text.contains("delete done"),
+        "help remove row missing: {text}"
+    );
+    assert!(
+        text.contains("help / quit"),
+        "help last row clipped: {text}"
+    );
     assert!(
         text.contains("press any key to close"),
         "help footer missing"

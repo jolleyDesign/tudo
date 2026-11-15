@@ -300,6 +300,7 @@ pub enum ConfirmAction {
     DeleteSubtask,
     DeleteNote,
     DeleteNotebook,
+    DeleteDoneTasks,
 }
 
 #[derive(Debug, Clone)]
@@ -1606,6 +1607,39 @@ impl App {
         self.clamp_task_selection();
     }
 
+    /// Permanently remove every done task from the selected list. Does nothing
+    /// in the tag view, which has no single list to clear.
+    pub fn delete_done_tasks(&mut self) {
+        let Some(li) = self.selected_list_index() else {
+            return;
+        };
+        let key = self.selected_entry_key();
+        let current = self.current_task_ref();
+        let Some(list) = self.lists.get_mut(li) else {
+            return;
+        };
+        // Where the selected task lands once the done tasks above it are gone;
+        // `None` if it is itself being deleted.
+        let survivor = current
+            .filter(|r| !list.tasks[r.task].done)
+            .map(|r| TaskRef {
+                list: r.list,
+                task: r.task - list.tasks[..r.task].iter().filter(|t| t.done).count(),
+            });
+        let before = list.tasks.len();
+        list.tasks.retain(|t| !t.done);
+        let removed = before - list.tasks.len();
+        if removed == 0 {
+            return;
+        }
+        self.save_list_at(li);
+        // Removed tasks may have carried the last use of a tag.
+        self.reselect_entry(key);
+        self.keep_task_selected(survivor);
+        let s = if removed == 1 { "" } else { "s" };
+        self.set_status(format!("deleted {removed} done task{s}"));
+    }
+
     pub fn delete_current_list(&mut self) {
         let Some(li) = self.selected_list_index() else {
             return;
@@ -2522,6 +2556,28 @@ impl App {
                 });
             }
         }
+    }
+
+    pub fn start_delete_done_tasks(&mut self) {
+        // A list-wide action; it has no meaning inside one task's detail view.
+        if self.in_detail() {
+            return;
+        }
+        let Some(list) = self.current_list() else {
+            self.set_status("select a list to delete its done tasks".to_string());
+            return;
+        };
+        let done = list.tasks.iter().filter(|t| t.done).count();
+        if done == 0 {
+            self.set_status("no done tasks in this list".to_string());
+            return;
+        }
+        let s = if done == 1 { "" } else { "s" };
+        self.mode = Mode::Confirm(ConfirmState {
+            prompt: format!("Delete {done} done task{s} from \"{}\"?", list.name),
+            action: ConfirmAction::DeleteDoneTasks,
+            return_detail: false,
+        });
     }
 
     /// Toggle done for whatever is selected given the current mode.

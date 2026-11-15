@@ -231,6 +231,7 @@ fn dispatch_tasks(app: &mut App, action: Action) {
         Action::Edit => app.start_edit(),
         Action::Archive => app.archive_selection(),
         Action::Delete => app.start_delete(),
+        Action::DeleteDoneTasks => app.start_delete_done_tasks(),
         Action::CyclePriority => app.cycle_current_priority(),
         Action::SetPoints => app.start_set_points(),
         Action::SetDue => app.start_set_due(),
@@ -303,6 +304,7 @@ fn dispatch_notes(app: &mut App, action: Action) {
         Action::SortPicker => app.open_note_sort_picker(),
         // Task-only actions have no meaning on the Notes tab.
         Action::ToggleDone
+        | Action::DeleteDoneTasks
         | Action::CyclePriority
         | Action::SetPoints
         | Action::SetDue
@@ -492,6 +494,7 @@ fn confirm_key(app: &mut App, key: KeyEvent) {
             app.mode = Mode::Normal;
         }
         ConfirmAction::DeleteNotebook => app.delete_current_notebook(),
+        ConfirmAction::DeleteDoneTasks => app.delete_done_tasks(),
     }
 }
 
